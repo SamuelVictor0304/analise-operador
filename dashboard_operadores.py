@@ -10,6 +10,7 @@ import streamlit as st
 BASE_DIR = Path(__file__).parent
 EVENTOS_FILE = BASE_DIR / "Cobmais-Eventos-908-2026050417.xlsx"
 RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
+COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 
 
 def latest_file(pattern):
@@ -84,6 +85,10 @@ FIELD_HELP = {
     "quartil_meta_individual": ("Quartil meta individual", "Quartil do atingimento da meta individual. Q4 é o melhor grupo."),
     "quartil_meta_geral": ("Quartil meta geral", "Quartil da participação na meta geral do escritório. Q4 é o melhor grupo."),
     "diagnostico_meta": ("Diagnóstico meta", "Leitura gerencial combinando atingimento individual e contribuição na meta geral."),
+    "nome_colaborador": ("Nome colaborador", "Nome completo do colaborador conforme Base de colaboradores."),
+    "base_colaborador": ("Base colaborador", "Aba/carteira da Base de colaboradores onde o login foi encontrado."),
+    "cargo_colaborador": ("Cargo", "Cargo do colaborador conforme Base de colaboradores."),
+    "negociador_cadastrado": ("Cadastro colaborador", "Indica se o operador está cadastrado como negociador na Base de colaboradores."),
 }
 
 
@@ -173,6 +178,39 @@ def selected_months(resultados):
 
 
 @st.cache_data(show_spinner=False)
+def load_collaborators():
+    if not COLABORADORES_FILE.exists():
+        return pd.DataFrame(columns=["OPERADOR", "nome_colaborador", "base_colaborador", "cargo_colaborador"])
+
+    sheets = pd.read_excel(COLABORADORES_FILE, sheet_name=None)
+    frames = []
+    for sheet_name, df in sheets.items():
+        df.columns = [normalize_text(c).upper() for c in df.columns]
+        if "LOGIN COBMAIS" not in df.columns:
+            continue
+        base = pd.DataFrame(
+            {
+                "OPERADOR": df["LOGIN COBMAIS"].map(normalize_operator),
+                "nome_colaborador": df.get("NOME COLABORADOR", pd.Series(index=df.index, dtype=object)).map(normalize_text),
+                "base_colaborador": sheet_name,
+                "cargo_colaborador": df.get("CARGO", pd.Series(index=df.index, dtype=object)).map(normalize_text).str.upper(),
+            }
+        )
+        base = base[base["OPERADOR"].notna()]
+        base = base[~base["OPERADOR"].isin(["escritório", "escritorio"])]
+        frames.append(base)
+
+    if not frames:
+        return pd.DataFrame(columns=["OPERADOR", "nome_colaborador", "base_colaborador", "cargo_colaborador"])
+
+    colaboradores = pd.concat(frames, ignore_index=True).drop_duplicates(["OPERADOR", "base_colaborador"])
+    judicial = colaboradores[colaboradores["base_colaborador"].eq("JUDICIAL")].copy()
+    if judicial.empty:
+        judicial = colaboradores[colaboradores["cargo_colaborador"].eq("NEGOCIADOR")].copy()
+    return judicial.drop_duplicates("OPERADOR")
+
+
+@st.cache_data(show_spinner=False)
 def load_office_goals():
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
@@ -215,11 +253,50 @@ def load_office_goals():
 
 def build_meta_analysis(operador_df, resultados):
     metas_gerais = load_office_goals()
+    colaboradores = load_collaborators()
     meses = selected_months(resultados)
     meses_count = max(len(meses), 1)
     meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
 
-    df = operador_df.copy()
+    operadores_dados = operador_df[["OPERADOR"]].drop_duplicates()
+    operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
+    universo = pd.concat([operadores_base, operadores_dados], ignore_index=True).drop_duplicates("OPERADOR")
+    df = universo.merge(operador_df, on="OPERADOR", how="left")
+    df = df.merge(colaboradores, on="OPERADOR", how="left")
+    metric_cols = [
+        "acionamentos",
+        "clientes_trabalhados",
+        "contatos_efetivos",
+        "contatos_cliente",
+        "cpcs",
+        "clientes_cpc",
+        "acordos",
+        "pagamentos",
+        "acordos_sem_pagamento",
+        "acordos_em_aberto",
+        "acordos_nao_pagou",
+        "valor_negociado",
+        "valor_pago",
+        "valor_em_aberto",
+        "valor_nao_pagou",
+        "ticket_medio",
+        "tx_contato",
+        "tx_acordo",
+        "tx_acordo_cliente_cpc",
+        "tx_pagamento",
+        "tx_pagamento_cpc",
+        "tx_sem_pagamento",
+        "recuperacao",
+        "score",
+    ]
+    for col in metric_cols:
+        if col in df:
+            df[col] = df[col].fillna(0)
+    df["negociador_cadastrado"] = np.where(df["nome_colaborador"].notna(), "Sim", "Não")
+    df["nome_colaborador"] = df["nome_colaborador"].fillna("Não localizado na base")
+    df["base_colaborador"] = df["base_colaborador"].fillna("Fora da base")
+    df["cargo_colaborador"] = df["cargo_colaborador"].fillna("Não localizado")
+
     pos_retomado = {"ana.karolina.oliveira", "luiz.mauro"}
     df["meta_individual"] = np.where(df["OPERADOR"].isin(pos_retomado), 300000, 150000) * meses_count
     df["meta_geral_escritorio"] = meta_geral
@@ -1172,6 +1249,10 @@ with tabs[6]:
     st.subheader("Tabela de metas por operador")
     meta_cols = [
         "OPERADOR",
+        "nome_colaborador",
+        "base_colaborador",
+        "cargo_colaborador",
+        "negociador_cadastrado",
         "valor_pago",
         "meta_individual",
         "atingimento_meta_individual",
