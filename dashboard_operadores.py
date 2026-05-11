@@ -188,6 +188,8 @@ def load_collaborators():
         df.columns = [normalize_text(c).upper() for c in df.columns]
         if "LOGIN COBMAIS" not in df.columns:
             continue
+        if "ATIVO" in df.columns:
+            df = df[df["ATIVO"].map(normalize_text).str.upper().eq("SIM")].copy()
         base = pd.DataFrame(
             {
                 "OPERADOR": df["LOGIN COBMAIS"].map(normalize_operator),
