@@ -27,6 +27,20 @@ st.set_page_config(
 
 
 CORP_PALETTE = ["#213547", "#2f6f73", "#b7791f", "#6b7280", "#8a3ffc", "#bf616a"]
+MONTH_NAMES_PT = {
+    1: "JANEIRO",
+    2: "FEVEREIRO",
+    3: "MARÇO",
+    4: "ABRIL",
+    5: "MAIO",
+    6: "JUNHO",
+    7: "JULHO",
+    8: "AGOSTO",
+    9: "SETEMBRO",
+    10: "OUTUBRO",
+    11: "NOVEMBRO",
+    12: "DEZEMBRO",
+}
 
 FIELD_HELP = {
     "OPERADOR": ("Operador", "Negociador responsável pelo evento ou acordo."),
@@ -267,7 +281,13 @@ def apply_filters(eventos, resultados):
     meses = meses_df["MES_RESULTADO"].tolist()
     mes_padrao = []
     if not meses_df.empty:
-        mes_padrao = [meses_df.sort_values(["MES_NUM", "MES_RESULTADO"]).iloc[-1]["MES_RESULTADO"]]
+        mes_atual = MONTH_NAMES_PT.get(pd.Timestamp.today().month)
+        if mes_atual in meses:
+            mes_padrao = [mes_atual]
+        else:
+            meses_validos = meses_df[meses_df["MES_NUM"] <= pd.Timestamp.today().month]
+            base_mes = meses_validos if not meses_validos.empty else meses_df
+            mes_padrao = [base_mes.sort_values(["MES_NUM", "MES_RESULTADO"]).iloc[-1]["MES_RESULTADO"]]
 
     operador_sel = st.sidebar.multiselect("Operador", operadores)
     mes_sel = st.sidebar.multiselect("Mês do resultado", meses, default=mes_padrao)
@@ -595,6 +615,29 @@ def data_table(df, **kwargs):
         hide_index=True,
         **kwargs,
     )
+
+
+def quartile_operator_groups(df):
+    metrics = [
+        ("CPC -> acordo", "quartil_cpc_acordo"),
+        ("CPC -> pagamento", "quartil_cpc_pagamento"),
+        ("Risco sem pagamento", "quartil_risco_sem_pagamento"),
+        ("Volume contratos CPC", "quartil_volume"),
+    ]
+    groups = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
+    rows = []
+    for metric_label, metric_col in metrics:
+        for group in groups:
+            operadores = sorted(df.loc[df[metric_col].eq(group), "OPERADOR"].dropna().astype(str).tolist())
+            rows.append(
+                {
+                    "Métrica": metric_label,
+                    "Grupo": group,
+                    "Qtd. operadores": len(operadores),
+                    "Operadores": ", ".join(operadores) if operadores else "-",
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def glossary():
@@ -1056,6 +1099,20 @@ with tabs[6]:
             title="Distribuição dos diagnósticos",
             height=280,
         )
+
+    st.subheader("Operadores em cada grupo")
+    grupos_quartil = quartile_operator_groups(quartil_base)
+    st.dataframe(
+        grupos_quartil,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Métrica": st.column_config.TextColumn("Métrica", help="Indicador usado para montar o quartil."),
+            "Grupo": st.column_config.TextColumn("Grupo", help="Grupo do quartil. Q4 é destaque; Q1 é crítico."),
+            "Qtd. operadores": st.column_config.NumberColumn("Qtd. operadores", help="Quantidade de operadores no grupo."),
+            "Operadores": st.column_config.TextColumn("Operadores", help="Operadores classificados nesse grupo."),
+        },
+    )
 
     st.subheader("Operadores por quartil de conversão CPC")
     quartil_cols = [
