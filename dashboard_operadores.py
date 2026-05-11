@@ -260,10 +260,8 @@ def build_meta_analysis(operador_df, resultados):
     meses_count = max(len(meses), 1)
     meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
 
-    operadores_dados = operador_df[["OPERADOR"]].drop_duplicates()
     operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
-    universo = pd.concat([operadores_base, operadores_dados], ignore_index=True).drop_duplicates("OPERADOR")
-    df = universo.merge(operador_df, on="OPERADOR", how="left")
+    df = operadores_base.merge(operador_df, on="OPERADOR", how="left")
     df = df.merge(colaboradores, on="OPERADOR", how="left")
     metric_cols = [
         "acionamentos",
