@@ -62,6 +62,14 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
+    "quartil_score": ("Quartil score", "Classificação do operador em 4 grupos conforme score geral. Q4 é o melhor grupo."),
+    "quartil_volume": ("Quartil volume", "Classificação por volume de acionamentos. Q4 concentra os maiores volumes."),
+    "quartil_recuperacao": ("Quartil recuperação", "Classificação por percentual de recuperação. Q4 é o melhor grupo."),
+    "quartil_pagamento": ("Quartil pagamento", "Classificação por taxa acordo -> pagamento. Q4 é o melhor grupo."),
+    "quartil_cpc_acordo": ("Quartil CPC -> acordo", "Classificação por conversão de contratos com CPC em acordos. Q4 é o melhor grupo."),
+    "quartil_cpc_pagamento": ("Quartil CPC -> pagamento", "Classificação por conversão de contratos com CPC em pagamentos. Q4 é o melhor grupo."),
+    "quartil_risco_sem_pagamento": ("Quartil risco sem pagamento", "Classificação por taxa de acordos sem pagamento. Q4 é o menor risco."),
+    "diagnostico_quartil": ("Diagnóstico quartil", "Leitura combinada de volume e eficiência para priorização gerencial."),
 }
 
 
@@ -122,6 +130,45 @@ def num_fmt(value):
 
 def safe_div(num, den):
     return np.where(den == 0, 0, num / den)
+
+
+def quartile_label(series, higher_is_better=True, min_series=None, min_value=1):
+    values = pd.to_numeric(series, errors="coerce")
+    valid = values.notna()
+    if min_series is not None:
+        valid = valid & (pd.to_numeric(min_series, errors="coerce").fillna(0) >= min_value)
+
+    labels = pd.Series("Sem base", index=series.index, dtype="object")
+    if valid.sum() == 0:
+        return labels
+
+    ranked = values[valid].rank(method="average", pct=True)
+    if not higher_is_better:
+        ranked = 1 - ranked + (1 / valid.sum())
+
+    labels.loc[ranked[ranked <= 0.25].index] = "Q1 - crítico"
+    labels.loc[ranked[(ranked > 0.25) & (ranked <= 0.50)].index] = "Q2 - atenção"
+    labels.loc[ranked[(ranked > 0.50) & (ranked <= 0.75)].index] = "Q3 - bom"
+    labels.loc[ranked[ranked > 0.75].index] = "Q4 - destaque"
+    return labels
+
+
+def quartile_diagnosis(row):
+    volume = row.get("quartil_volume", "")
+    cpc_payment = row.get("quartil_cpc_pagamento", row.get("quartil_pagamento", ""))
+    risk = row.get("quartil_risco_sem_pagamento", "")
+
+    if volume.startswith("Q4") and cpc_payment.startswith("Q1"):
+        return "Alto volume com baixa conversão"
+    if cpc_payment.startswith("Q4") and risk.startswith("Q4"):
+        return "Alta eficiência e baixo risco"
+    if cpc_payment.startswith("Q4"):
+        return "Boa conversão final"
+    if risk.startswith("Q1"):
+        return "Atenção: alto risco sem pagamento"
+    if volume.startswith("Q1") and cpc_payment.startswith("Q4"):
+        return "Boa eficiência com pouco volume"
+    return "Monitorar"
 
 
 @st.cache_data(show_spinner=False)
@@ -300,6 +347,10 @@ def aggregate_operator(eventos, resultados):
         + df["valor_pago"].rank(pct=True) * 0.25
         + df["clientes_trabalhados"].rank(pct=True) * 0.10
     )
+    df["quartil_score"] = quartile_label(df["score"], min_series=df["acordos"], min_value=1)
+    df["quartil_volume"] = quartile_label(df["acionamentos"], min_series=df["acionamentos"], min_value=1)
+    df["quartil_recuperacao"] = quartile_label(df["recuperacao"], min_series=df["acordos"], min_value=1)
+    df["quartil_pagamento"] = quartile_label(df["tx_pagamento"], min_series=df["acordos"], min_value=1)
     return df.sort_values(["score", "valor_pago"], ascending=False)
 
 
@@ -351,6 +402,11 @@ def aggregate_cpc_operator(eventos, resultados):
     df["tx_acordo_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["tx_acordo_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
+    df["quartil_cpc_acordo"] = quartile_label(df["tx_cpc_acordo"], min_series=df["contratos_cpc"], min_value=5)
+    df["quartil_cpc_pagamento"] = quartile_label(df["tx_cpc_pagamento"], min_series=df["contratos_cpc"], min_value=5)
+    df["quartil_risco_sem_pagamento"] = quartile_label(df["tx_acordo_sem_pagamento"], higher_is_better=False, min_series=df["acordos"], min_value=1)
+    df["quartil_volume"] = quartile_label(df["contratos_cpc"], min_series=df["contratos_cpc"], min_value=1)
+    df["diagnostico_quartil"] = df.apply(quartile_diagnosis, axis=1)
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
 
@@ -601,7 +657,7 @@ with kpi_cols[8]:
 with kpi_cols[9]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Insights"])
+tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Quartis", "Insights"])
 
 with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
@@ -726,6 +782,10 @@ with tabs[1]:
         "ticket_medio",
         "recuperacao",
         "score",
+        "quartil_score",
+        "quartil_volume",
+        "quartil_recuperacao",
+        "quartil_pagamento",
     ]
     data_table(operador_df[cols])
 
@@ -828,6 +888,11 @@ with tabs[2]:
         "valor_nao_pagou",
         "ticket_medio",
         "recuperacao",
+        "quartil_cpc_acordo",
+        "quartil_cpc_pagamento",
+        "quartil_risco_sem_pagamento",
+        "quartil_volume",
+        "diagnostico_quartil",
     ]
     data_table(cpc_df[cpc_cols])
 
@@ -948,6 +1013,77 @@ with tabs[5]:
     data_table(matrix.sort_values(["valor_pago", "pagamentos"], ascending=False))
 
 with tabs[6]:
+    st.subheader("Análise por quartis")
+    st.caption("Q4 representa o melhor grupo da métrica. Para risco sem pagamento, Q4 representa menor risco.")
+
+    quartil_base = cpc_df.copy()
+    quartil_resumo = pd.DataFrame(
+        {
+            "Indicador": [
+                "CPC -> acordo",
+                "CPC -> pagamento",
+                "Risco sem pagamento",
+                "Volume de contratos CPC",
+            ],
+            "Q4 - destaque": [
+                (quartil_base["quartil_cpc_acordo"] == "Q4 - destaque").sum(),
+                (quartil_base["quartil_cpc_pagamento"] == "Q4 - destaque").sum(),
+                (quartil_base["quartil_risco_sem_pagamento"] == "Q4 - destaque").sum(),
+                (quartil_base["quartil_volume"] == "Q4 - destaque").sum(),
+            ],
+            "Q1 - crítico": [
+                (quartil_base["quartil_cpc_acordo"] == "Q1 - crítico").sum(),
+                (quartil_base["quartil_cpc_pagamento"] == "Q1 - crítico").sum(),
+                (quartil_base["quartil_risco_sem_pagamento"] == "Q1 - crítico").sum(),
+                (quartil_base["quartil_volume"] == "Q1 - crítico").sum(),
+            ],
+        }
+    )
+
+    c1, c2 = st.columns([1, 1.3])
+    with c1:
+        st.subheader("Resumo dos grupos")
+        st.dataframe(quartil_resumo, use_container_width=True, hide_index=True)
+    with c2:
+        diagnostico_df = quartil_base["diagnostico_quartil"].value_counts().reset_index()
+        diagnostico_df.columns = ["Diagnóstico", "Operadores"]
+        bar_chart(
+            diagnostico_df,
+            x="Operadores:Q",
+            y="Diagnóstico:N",
+            color="Diagnóstico:N",
+            tooltip=["Diagnóstico", "Operadores"],
+            title="Distribuição dos diagnósticos",
+            height=280,
+        )
+
+    st.subheader("Operadores por quartil de conversão CPC")
+    quartil_cols = [
+        "OPERADOR",
+        "contratos_cpc",
+        "acordos",
+        "pagamentos",
+        "acordos_em_aberto",
+        "acordos_nao_pagou",
+        "tx_cpc_acordo",
+        "tx_cpc_pagamento",
+        "tx_acordo_sem_pagamento",
+        "valor_pago",
+        "valor_em_aberto",
+        "valor_nao_pagou",
+        "quartil_cpc_acordo",
+        "quartil_cpc_pagamento",
+        "quartil_risco_sem_pagamento",
+        "quartil_volume",
+        "diagnostico_quartil",
+    ]
+    data_table(quartil_base[quartil_cols].sort_values(["quartil_cpc_pagamento", "valor_pago"], ascending=[False, False]))
+
+    st.subheader("Alto volume com baixa conversão")
+    alerta = quartil_base[quartil_base["diagnostico_quartil"].eq("Alto volume com baixa conversão")]
+    data_table(alerta[quartil_cols].sort_values("contratos_cpc", ascending=False))
+
+with tabs[7]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
     oportunidades = operador_df[(operador_df["acionamentos"] >= operador_df["acionamentos"].median()) & (operador_df["score"] < avg_score)].sort_values("acionamentos", ascending=False)
     destaques = operador_df[operador_df["score"] >= operador_df["score"].quantile(0.75)].sort_values("score", ascending=False)
