@@ -76,14 +76,14 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "quartil_score": ("Quartil score", "Classificação do operador em 4 grupos conforme score geral. Q4 é o melhor grupo."),
-    "quartil_volume": ("Quartil volume", "Classificação por volume de acionamentos. Q4 concentra os maiores volumes."),
-    "quartil_recuperacao": ("Quartil recuperação", "Classificação por percentual de recuperação. Q4 é o melhor grupo."),
-    "quartil_pagamento": ("Quartil pagamento", "Classificação por taxa acordo -> pagamento. Q4 é o melhor grupo."),
-    "quartil_cpc_acordo": ("Quartil CPC -> acordo", "Classificação por conversão de contratos com CPC em acordos. Q4 é o melhor grupo."),
-    "quartil_cpc_pagamento": ("Quartil CPC -> pagamento", "Classificação por conversão de contratos com CPC em pagamentos. Q4 é o melhor grupo."),
-    "quartil_risco_sem_pagamento": ("Quartil risco sem pagamento", "Classificação por taxa de acordos sem pagamento. Q4 é o menor risco."),
-    "diagnostico_quartil": ("Diagnóstico quartil", "Leitura combinada de volume e eficiência para priorização gerencial."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil, ou R$ 300 mil para Ana Karolina e Luiz Mauro."),
+    "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
+    "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
+    "meta_geral_escritorio": ("Meta geral escritório", "Meta geral do escritório para o mês, lida na aba METAS."),
+    "participacao_meta_geral": ("% meta geral", "Quanto o operador contribuiu para a meta geral do escritório."),
+    "quartil_meta_individual": ("Quartil meta individual", "Quartil do atingimento da meta individual. Q4 é o melhor grupo."),
+    "quartil_meta_geral": ("Quartil meta geral", "Quartil da participação na meta geral do escritório. Q4 é o melhor grupo."),
+    "diagnostico_meta": ("Diagnóstico meta", "Leitura gerencial combinando atingimento individual e contribuição na meta geral."),
 }
 
 
@@ -167,22 +167,98 @@ def quartile_label(series, higher_is_better=True, min_series=None, min_value=1):
     return labels
 
 
-def quartile_diagnosis(row):
-    volume = row.get("quartil_volume", "")
-    cpc_payment = row.get("quartil_cpc_pagamento", row.get("quartil_pagamento", ""))
-    risk = row.get("quartil_risco_sem_pagamento", "")
+def selected_months(resultados):
+    meses = resultados[["MES_RESULTADO", "MES_NUM"]].replace("", np.nan).dropna(subset=["MES_RESULTADO"]).drop_duplicates()
+    return meses.sort_values(["MES_NUM", "MES_RESULTADO"])["MES_RESULTADO"].tolist()
 
-    if volume.startswith("Q4") and cpc_payment.startswith("Q1"):
-        return "Alto volume com baixa conversão"
-    if cpc_payment.startswith("Q4") and risk.startswith("Q4"):
-        return "Alta eficiência e baixo risco"
-    if cpc_payment.startswith("Q4"):
-        return "Boa conversão final"
-    if risk.startswith("Q1"):
-        return "Atenção: alto risco sem pagamento"
-    if volume.startswith("Q1") and cpc_payment.startswith("Q4"):
-        return "Boa eficiência com pouco volume"
-    return "Monitorar"
+
+@st.cache_data(show_spinner=False)
+def load_office_goals():
+    metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
+    header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
+    if len(header_idx) == 0:
+        return {}
+
+    header_row = header_idx[0]
+    headers = metas.iloc[header_row].map(normalize_text).str.upper().tolist()
+    totals = metas.iloc[header_row + 1:].copy()
+    total_rows = totals[totals.iloc[:, 0].astype(str).str.strip().str.upper().eq("TOTAL")]
+    if total_rows.empty:
+        return {}
+
+    total_row = total_rows.iloc[0]
+    goals = {}
+    month_abbr = {
+        "JANEIRO": "JAN",
+        "FEVEREIRO": "FEV",
+        "MARÇO": "MAR",
+        "ABRIL": "ABR",
+        "MAIO": "MAI",
+        "JUNHO": "JUN",
+        "JULHO": "JUL",
+        "AGOSTO": "AGO",
+        "SETEMBRO": "SET",
+        "OUTUBRO": "OUT",
+        "NOVEMBRO": "NOV",
+        "DEZEMBRO": "DEZ",
+    }
+    for month, abbr in month_abbr.items():
+        target_col = None
+        for i, header in enumerate(headers):
+            if header == f"META {abbr}":
+                target_col = i
+                break
+        if target_col is not None:
+            goals[month] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
+    return {k: float(v) for k, v in goals.items() if pd.notna(v)}
+
+
+def build_meta_analysis(operador_df, resultados):
+    metas_gerais = load_office_goals()
+    meses = selected_months(resultados)
+    meses_count = max(len(meses), 1)
+    meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
+
+    df = operador_df.copy()
+    pos_retomado = {"ana.karolina.oliveira", "luiz.mauro"}
+    df["meta_individual"] = np.where(df["OPERADOR"].isin(pos_retomado), 300000, 150000) * meses_count
+    df["meta_geral_escritorio"] = meta_geral
+    df["atingimento_meta_individual"] = safe_div(df["valor_pago"], df["meta_individual"])
+    df["saldo_meta_individual"] = df["valor_pago"] - df["meta_individual"]
+    df["participacao_meta_geral"] = safe_div(df["valor_pago"], df["meta_geral_escritorio"])
+    df["quartil_meta_individual"] = quartile_label(df["atingimento_meta_individual"], min_series=df["meta_individual"], min_value=1)
+    df["quartil_meta_geral"] = quartile_label(df["participacao_meta_geral"], min_series=df["meta_individual"], min_value=1)
+    df["diagnostico_meta"] = np.select(
+        [
+            df["atingimento_meta_individual"] >= 1,
+            df["atingimento_meta_individual"] >= 0.75,
+            df["atingimento_meta_individual"] >= 0.50,
+        ],
+        ["Meta batida", "Próximo da meta", "Atenção"],
+        default="Crítico",
+    )
+    return df.sort_values(["atingimento_meta_individual", "valor_pago"], ascending=False), meses, meta_geral
+
+
+def meta_operator_groups(df):
+    metrics = [
+        ("Atingimento da meta individual", "quartil_meta_individual"),
+        ("Participação na meta geral", "quartil_meta_geral"),
+    ]
+    groups = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
+    rows = []
+    for metric_label, metric_col in metrics:
+        for group in groups:
+            operadores = sorted(df.loc[df[metric_col].eq(group), "OPERADOR"].dropna().astype(str).tolist())
+            rows.append(
+                {
+                    "Métrica": metric_label,
+                    "Grupo": group,
+                    "Qtd. operadores": len(operadores),
+                    "Operadores": ", ".join(operadores) if operadores else "-",
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -367,10 +443,6 @@ def aggregate_operator(eventos, resultados):
         + df["valor_pago"].rank(pct=True) * 0.25
         + df["clientes_trabalhados"].rank(pct=True) * 0.10
     )
-    df["quartil_score"] = quartile_label(df["score"], min_series=df["acordos"], min_value=1)
-    df["quartil_volume"] = quartile_label(df["acionamentos"], min_series=df["acionamentos"], min_value=1)
-    df["quartil_recuperacao"] = quartile_label(df["recuperacao"], min_series=df["acordos"], min_value=1)
-    df["quartil_pagamento"] = quartile_label(df["tx_pagamento"], min_series=df["acordos"], min_value=1)
     return df.sort_values(["score", "valor_pago"], ascending=False)
 
 
@@ -422,11 +494,6 @@ def aggregate_cpc_operator(eventos, resultados):
     df["tx_acordo_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["tx_acordo_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
-    df["quartil_cpc_acordo"] = quartile_label(df["tx_cpc_acordo"], min_series=df["contratos_cpc"], min_value=5)
-    df["quartil_cpc_pagamento"] = quartile_label(df["tx_cpc_pagamento"], min_series=df["contratos_cpc"], min_value=5)
-    df["quartil_risco_sem_pagamento"] = quartile_label(df["tx_acordo_sem_pagamento"], higher_is_better=False, min_series=df["acordos"], min_value=1)
-    df["quartil_volume"] = quartile_label(df["contratos_cpc"], min_series=df["contratos_cpc"], min_value=1)
-    df["diagnostico_quartil"] = df.apply(quartile_diagnosis, axis=1)
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
 
@@ -514,7 +581,16 @@ def heatmap(df, x, y, metric, title):
 
 def display_fields(df):
     out = df.copy()
-    money_cols = ["valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "ticket_medio"]
+    money_cols = [
+        "valor_negociado",
+        "valor_pago",
+        "valor_em_aberto",
+        "valor_nao_pagou",
+        "ticket_medio",
+        "meta_individual",
+        "saldo_meta_individual",
+        "meta_geral_escritorio",
+    ]
     pct_cols = [
         "tx_contato",
         "tx_acordo",
@@ -528,6 +604,8 @@ def display_fields(df):
         "tx_acordo_sem_pagamento",
         "recuperacao",
         "score",
+        "atingimento_meta_individual",
+        "participacao_meta_geral",
     ]
     num_cols = [
         "acionamentos",
@@ -558,7 +636,16 @@ def display_fields(df):
 
 def formatted_table(df):
     out = df.copy()
-    for col in ["valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "ticket_medio"]:
+    for col in [
+        "valor_negociado",
+        "valor_pago",
+        "valor_em_aberto",
+        "valor_nao_pagou",
+        "ticket_medio",
+        "meta_individual",
+        "saldo_meta_individual",
+        "meta_geral_escritorio",
+    ]:
         if col in out:
             out[col] = out[col].map(money_fmt)
     for col in [
@@ -574,6 +661,8 @@ def formatted_table(df):
         "tx_acordo_sem_pagamento",
         "recuperacao",
         "score",
+        "atingimento_meta_individual",
+        "participacao_meta_geral",
     ]:
         if col in out:
             out[col] = out[col].map(pct_fmt)
@@ -615,29 +704,6 @@ def data_table(df, **kwargs):
         hide_index=True,
         **kwargs,
     )
-
-
-def quartile_operator_groups(df):
-    metrics = [
-        ("CPC -> acordo", "quartil_cpc_acordo"),
-        ("CPC -> pagamento", "quartil_cpc_pagamento"),
-        ("Risco sem pagamento", "quartil_risco_sem_pagamento"),
-        ("Volume contratos CPC", "quartil_volume"),
-    ]
-    groups = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
-    rows = []
-    for metric_label, metric_col in metrics:
-        for group in groups:
-            operadores = sorted(df.loc[df[metric_col].eq(group), "OPERADOR"].dropna().astype(str).tolist())
-            rows.append(
-                {
-                    "Métrica": metric_label,
-                    "Grupo": group,
-                    "Qtd. operadores": len(operadores),
-                    "Operadores": ", ".join(operadores) if operadores else "-",
-                }
-            )
-    return pd.DataFrame(rows)
 
 
 def glossary():
@@ -700,7 +766,7 @@ with kpi_cols[8]:
 with kpi_cols[9]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Quartis", "Insights"])
+tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Metas", "Insights"])
 
 with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
@@ -825,10 +891,6 @@ with tabs[1]:
         "ticket_medio",
         "recuperacao",
         "score",
-        "quartil_score",
-        "quartil_volume",
-        "quartil_recuperacao",
-        "quartil_pagamento",
     ]
     data_table(operador_df[cols])
 
@@ -931,11 +993,6 @@ with tabs[2]:
         "valor_nao_pagou",
         "ticket_medio",
         "recuperacao",
-        "quartil_cpc_acordo",
-        "quartil_cpc_pagamento",
-        "quartil_risco_sem_pagamento",
-        "quartil_volume",
-        "diagnostico_quartil",
     ]
     data_table(cpc_df[cpc_cols])
 
@@ -1056,54 +1113,52 @@ with tabs[5]:
     data_table(matrix.sort_values(["valor_pago", "pagamentos"], ascending=False))
 
 with tabs[6]:
-    st.subheader("Análise por quartis")
-    st.caption("Q4 representa o melhor grupo da métrica. Para risco sem pagamento, Q4 representa menor risco.")
+    st.subheader("Metas e quartis de atingimento")
+    st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
 
-    quartil_base = cpc_df.copy()
-    quartil_resumo = pd.DataFrame(
-        {
-            "Indicador": [
-                "CPC -> acordo",
-                "CPC -> pagamento",
-                "Risco sem pagamento",
-                "Volume de contratos CPC",
-            ],
-            "Q4 - destaque": [
-                (quartil_base["quartil_cpc_acordo"] == "Q4 - destaque").sum(),
-                (quartil_base["quartil_cpc_pagamento"] == "Q4 - destaque").sum(),
-                (quartil_base["quartil_risco_sem_pagamento"] == "Q4 - destaque").sum(),
-                (quartil_base["quartil_volume"] == "Q4 - destaque").sum(),
-            ],
-            "Q1 - crítico": [
-                (quartil_base["quartil_cpc_acordo"] == "Q1 - crítico").sum(),
-                (quartil_base["quartil_cpc_pagamento"] == "Q1 - crítico").sum(),
-                (quartil_base["quartil_risco_sem_pagamento"] == "Q1 - crítico").sum(),
-                (quartil_base["quartil_volume"] == "Q1 - crítico").sum(),
-            ],
-        }
-    )
+    metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados)
+    meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Mês analisado", meses_texto)
+    with c2:
+        metric_card("Meta geral escritório", money_fmt(meta_geral))
+    with c3:
+        metric_card("Recebido", money_fmt(metas_df["valor_pago"].sum()))
+    with c4:
+        metric_card("% meta geral", pct_fmt(metas_df["valor_pago"].sum() / meta_geral if meta_geral else 0))
+
+    meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
+    meta_resumo.columns = ["Diagnóstico", "Operadores"]
     c1, c2 = st.columns([1, 1.3])
     with c1:
-        st.subheader("Resumo dos grupos")
-        st.dataframe(quartil_resumo, use_container_width=True, hide_index=True)
+        st.subheader("Resumo por diagnóstico")
+        st.dataframe(meta_resumo, use_container_width=True, hide_index=True)
     with c2:
-        diagnostico_df = quartil_base["diagnostico_quartil"].value_counts().reset_index()
-        diagnostico_df.columns = ["Diagnóstico", "Operadores"]
+        chart_meta = display_fields(metas_df.sort_values("atingimento_meta_individual", ascending=False).head(15))
         bar_chart(
-            diagnostico_df,
-            x="Operadores:Q",
-            y="Diagnóstico:N",
-            color="Diagnóstico:N",
-            tooltip=["Diagnóstico", "Operadores"],
-            title="Distribuição dos diagnósticos",
-            height=280,
+            chart_meta,
+            x=alt.X("atingimento_meta_individual:Q", axis=alt.Axis(format="%")),
+            y="OPERADOR:N",
+            color="diagnostico_meta:N",
+            tooltip=[
+                "OPERADOR",
+                "valor_pago_br",
+                "meta_individual_br",
+                "atingimento_meta_individual_br",
+                "saldo_meta_individual_br",
+                "participacao_meta_geral_br",
+                "diagnostico_meta",
+            ],
+            title="Atingimento da meta individual",
+            height=360,
         )
 
-    st.subheader("Operadores em cada grupo")
-    grupos_quartil = quartile_operator_groups(quartil_base)
+    st.subheader("Operadores em cada quartil")
+    grupos_meta = meta_operator_groups(metas_df)
     st.dataframe(
-        grupos_quartil,
+        grupos_meta,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -1114,31 +1169,22 @@ with tabs[6]:
         },
     )
 
-    st.subheader("Operadores por quartil de conversão CPC")
-    quartil_cols = [
+    st.subheader("Tabela de metas por operador")
+    meta_cols = [
         "OPERADOR",
-        "contratos_cpc",
-        "acordos",
-        "pagamentos",
-        "acordos_em_aberto",
-        "acordos_nao_pagou",
-        "tx_cpc_acordo",
-        "tx_cpc_pagamento",
-        "tx_acordo_sem_pagamento",
         "valor_pago",
-        "valor_em_aberto",
-        "valor_nao_pagou",
-        "quartil_cpc_acordo",
-        "quartil_cpc_pagamento",
-        "quartil_risco_sem_pagamento",
-        "quartil_volume",
-        "diagnostico_quartil",
+        "meta_individual",
+        "atingimento_meta_individual",
+        "saldo_meta_individual",
+        "meta_geral_escritorio",
+        "participacao_meta_geral",
+        "quartil_meta_individual",
+        "quartil_meta_geral",
+        "diagnostico_meta",
+        "pagamentos",
+        "acordos",
     ]
-    data_table(quartil_base[quartil_cols].sort_values(["quartil_cpc_pagamento", "valor_pago"], ascending=[False, False]))
-
-    st.subheader("Alto volume com baixa conversão")
-    alerta = quartil_base[quartil_base["diagnostico_quartil"].eq("Alto volume com baixa conversão")]
-    data_table(alerta[quartil_cols].sort_values("contratos_cpc", ascending=False))
+    data_table(metas_df[meta_cols])
 
 with tabs[7]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
