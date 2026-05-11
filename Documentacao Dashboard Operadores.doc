@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Documentação do Dashboard de Performance Operacional</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      color: #1f2933;
+      line-height: 1.45;
+      margin: 36px;
+    }
+    h1 {
+      color: #17324d;
+      font-size: 26px;
+      border-bottom: 3px solid #2f6f73;
+      padding-bottom: 8px;
+    }
+    h2 {
+      color: #17324d;
+      font-size: 19px;
+      margin-top: 26px;
+    }
+    h3 {
+      color: #2f6f73;
+      font-size: 15px;
+      margin-top: 18px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0 18px 0;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #cbd5df;
+      padding: 7px;
+      vertical-align: top;
+    }
+    th {
+      background: #e7eef3;
+      color: #17324d;
+      text-align: left;
+    }
+    .note {
+      background: #f3f7f7;
+      border-left: 4px solid #2f6f73;
+      padding: 10px 12px;
+      margin: 12px 0;
+    }
+    .warn {
+      background: #fff7ed;
+      border-left: 4px solid #b7791f;
+      padding: 10px 12px;
+      margin: 12px 0;
+    }
+    code {
+      font-family: Consolas, monospace;
+      background: #eef2f6;
+      padding: 1px 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dashboard de Performance Operacional por Operador</h1>
+
+  <h2>1. Objetivo</h2>
+  <p>
+    O dashboard foi desenvolvido para apoiar a gestão na análise de performance dos negociadores,
+    consolidando acionamentos, CPCs, acordos, pagamentos, valores negociados e recuperação.
+    A proposta é permitir uma leitura executiva e operacional sobre quais operadores performam melhor
+    por volume, conversão, faixa de atraso, região e carteira/produto.
+  </p>
+
+  <div class="note">
+    <strong>Uso principal:</strong> identificar onde cada operador é mais eficiente, quais acordos não
+    estão virando pagamento, quais faixas ou regiões têm maior oportunidade de recuperação e quais
+    negociadores precisam de acompanhamento.
+  </div>
+
+  <h2>2. Bases Utilizadas</h2>
+  <table>
+    <tr>
+      <th>Arquivo</th>
+      <th>Uso no dashboard</th>
+      <th>Observação</th>
+    </tr>
+    <tr>
+      <td><code>Cobmais-Eventos-908-2026050417.xlsx</code></td>
+      <td>Eventos de acionamento, CPC, produtividade e contatos por operador.</td>
+      <td>O dashboard usa a aba <code>Eventos</code>.</td>
+    </tr>
+    <tr>
+      <td><code>Pesquisa-Cliente-908-*.xlsx</code></td>
+      <td>Dados cadastrais de contrato, produto, atraso, total aberto e faixa de atraso dos clientes.</td>
+      <td>O dashboard busca automaticamente o arquivo mais recente com esse padrão.</td>
+    </tr>
+    <tr>
+      <td><code>BASE RESULTADOS 2026.xlsm</code></td>
+      <td>Acordos, status de pagamento, data de pagamento, valor negociado, UF, região, campanha e DPD.</td>
+      <td>O dashboard usa a aba <code>BASE</code>.</td>
+    </tr>
+  </table>
+
+  <h2>3. Regras de Cálculo</h2>
+
+  <h3>3.1 Operador</h3>
+  <p>
+    O operador dos eventos vem da coluna <code>OPERADOR</code>. O operador dos acordos vem da coluna
+    <code>ACORDO POR</code>. Os nomes são padronizados em letras minúsculas para reduzir divergências.
+  </p>
+
+  <h3>3.2 Acionamentos</h3>
+  <p>
+    Acionamentos são os registros da aba <code>Eventos</code>, desconsiderando por padrão eventos do operador
+    <code>AUTO</code> e eventos de importação. Existe um filtro lateral para incluir esses registros quando necessário.
+  </p>
+
+  <h3>3.3 CPC</h3>
+  <p>
+    CPC é considerado quando o evento começa com os códigos <strong>02, 03, 04 ou 05</strong>.
+    Essa regra foi definida para representar os contatos produtivos usados na avaliação operacional.
+  </p>
+
+  <table>
+    <tr>
+      <th>Código</th>
+      <th>Interpretação no dashboard</th>
+    </tr>
+    <tr>
+      <td>02</td>
+      <td>Contato com cliente por ligação.</td>
+    </tr>
+    <tr>
+      <td>03</td>
+      <td>Contato com cliente por WhatsApp.</td>
+    </tr>
+    <tr>
+      <td>04</td>
+      <td>Contato com terceiro responsável por ligação.</td>
+    </tr>
+    <tr>
+      <td>05</td>
+      <td>Contato com terceiro responsável por WhatsApp.</td>
+    </tr>
+  </table>
+
+  <h3>3.4 Valor Negociado</h3>
+  <p>
+    O valor negociado vem da coluna <code>VALOR DO BANCO - META</code>, localizada na aba <code>BASE</code>
+    do arquivo <code>BASE RESULTADOS 2026.xlsm</code>.
+  </p>
+
+  <h3>3.5 Valor Recebido</h3>
+  <p>
+    A coluna <code>Escritório</code> foi desconsiderada. O dashboard passou a calcular o recebido da seguinte forma:
+  </p>
+  <ul>
+    <li>Se o acordo tem status <code>PAGOU</code> ou possui <code>DATA DO PAGAMENTO</code>, o valor recebido assume o <code>VALOR DO BANCO - META</code>.</li>
+    <li>Se o acordo não foi pago, o valor recebido é <code>R$ 0,00</code>.</li>
+  </ul>
+
+  <div class="warn">
+    <strong>Importante:</strong> esse critério considera o valor negociado como valor recuperado quando há evidência de pagamento.
+    Se futuramente existir uma coluna específica de valor pago pelo cliente, o dashboard pode ser ajustado para usá-la.
+  </div>
+
+  <h3>3.6 Pagamento</h3>
+  <p>
+    Um acordo é considerado pago quando o status é <code>PAGOU</code> ou quando há preenchimento em
+    <code>DATA DO PAGAMENTO</code>.
+  </p>
+
+  <h3>3.7 Faixa de Atraso</h3>
+  <p>
+    As faixas são calculadas a partir do DPD ou atraso do contrato:
+  </p>
+  <table>
+    <tr><th>Faixa</th><th>Critério</th></tr>
+    <tr><td>000-030</td><td>Até 30 dias</td></tr>
+    <tr><td>031-060</td><td>31 a 60 dias</td></tr>
+    <tr><td>061-090</td><td>61 a 90 dias</td></tr>
+    <tr><td>091-120</td><td>91 a 120 dias</td></tr>
+    <tr><td>121-180</td><td>121 a 180 dias</td></tr>
+    <tr><td>181-360</td><td>181 a 360 dias</td></tr>
+    <tr><td>361+</td><td>Acima de 360 dias</td></tr>
+  </table>
+
+  <h2>4. Indicadores Principais</h2>
+  <table>
+    <tr>
+      <th>Indicador</th>
+      <th>Como é calculado</th>
+      <th>Interpretação</th>
+    </tr>
+    <tr>
+      <td>Clientes trabalhados</td>
+      <td>Quantidade distinta de contratos acionados.</td>
+      <td>Mede abrangência da atuação.</td>
+    </tr>
+    <tr>
+      <td>Acionamentos</td>
+      <td>Total de eventos válidos por operador.</td>
+      <td>Mede volume de trabalho.</td>
+    </tr>
+    <tr>
+      <td>CPCs</td>
+      <td>Eventos iniciados por 02, 03, 04 ou 05.</td>
+      <td>Mede contatos produtivos.</td>
+    </tr>
+    <tr>
+      <td>Acordos</td>
+      <td>Registros de acordo na base de resultados.</td>
+      <td>Mede conversão comercial.</td>
+    </tr>
+    <tr>
+      <td>Pagamentos</td>
+      <td>Acordos com status pago ou data de pagamento.</td>
+      <td>Mede efetividade final do acordo.</td>
+    </tr>
+    <tr>
+      <td>Taxa CPC -> acordo</td>
+      <td>Acordos em contratos com CPC / contratos com CPC.</td>
+      <td>Mostra a capacidade de transformar contato produtivo em acordo.</td>
+    </tr>
+    <tr>
+      <td>Taxa CPC -> pagamento</td>
+      <td>Pagamentos em contratos com CPC / contratos com CPC.</td>
+      <td>Mostra a qualidade final da negociação.</td>
+    </tr>
+    <tr>
+      <td>Acordos sem pagamento</td>
+      <td>Acordos sem status pago e sem data de pagamento.</td>
+      <td>Indica risco de quebra, follow-up ou baixa qualidade de fechamento.</td>
+    </tr>
+    <tr>
+      <td>Recuperação</td>
+      <td>Valor recebido / valor negociado.</td>
+      <td>Mede quanto do negociado foi efetivamente recuperado.</td>
+    </tr>
+  </table>
+
+  <h2>5. Abas do Dashboard</h2>
+
+  <h3>5.1 Visão Geral</h3>
+  <p>
+    Apresenta os KPIs consolidados da operação: clientes, acionamentos, CPCs/contatos efetivos, acordos,
+    pagamentos, valor negociado, valor recebido e recuperação. Também traz ranking geral e funil operacional.
+  </p>
+
+  <h3>5.2 Operadores</h3>
+  <p>
+    Mostra o desempenho individual por negociador, incluindo volume, CPC, acordos, pagamentos, acordos sem pagamento,
+    taxas de conversão, valor negociado, valor recebido e score de performance.
+  </p>
+
+  <h3>5.3 CPC</h3>
+  <p>
+    Aba focada na análise de conversão de CPC. Cruza operador e contrato para identificar:
+  </p>
+  <ul>
+    <li>quais negociadores converteram CPC em acordo;</li>
+    <li>quais converteram CPC em pagamento;</li>
+    <li>quais geraram acordo, mas sem pagamento;</li>
+    <li>qual a qualidade da conversão de cada negociador.</li>
+  </ul>
+
+  <h3>5.4 Faixa de Atraso</h3>
+  <p>
+    Analisa a performance por faixa de atraso, permitindo identificar onde há maior recuperação,
+    maior dificuldade de pagamento e quais operadores se destacam em cada faixa.
+  </p>
+
+  <h3>5.5 Região</h3>
+  <p>
+    Consolida resultados por região, mostrando valor negociado, valor recebido, recuperação e operadores com melhor
+    desempenho regional.
+  </p>
+
+  <h3>5.6 Matriz</h3>
+  <p>
+    Cruza operador, faixa de atraso e região. A matriz permite localizar rapidamente combinações de melhor performance,
+    como operador com maior valor recuperado por segmento ou melhor taxa de pagamento em determinada faixa.
+  </p>
+
+  <h3>5.7 Insights</h3>
+  <p>
+    Resume oportunidades de gestão: operadores com boa performance, operadores com alto volume e baixa eficiência,
+    e faixas de atraso com maior oportunidade de recuperação.
+  </p>
+
+  <h2>6. Filtros Disponíveis</h2>
+  <p>
+    O painel lateral permite filtrar por operador, região, faixa de atraso, campanha, produto e período.
+    Também existe a opção de incluir ou não eventos automáticos/importação nos acionamentos.
+  </p>
+
+  <h2>7. Como Atualizar os Dados</h2>
+  <ol>
+    <li>Substituir as planilhas na pasta do projeto.</li>
+    <li>Manter o arquivo de eventos com o nome <code>Cobmais-Eventos-908-2026050417.xlsx</code>.</li>
+    <li>Para a pesquisa de cliente, o dashboard aceita automaticamente o padrão <code>Pesquisa-Cliente-908-*.xlsx</code>.</li>
+    <li>Manter a base de resultados como <code>BASE RESULTADOS 2026.xlsm</code>.</li>
+    <li>Reiniciar o Streamlit ou clicar em <code>Rerun</code>.</li>
+  </ol>
+
+  <p>Comando para abrir o dashboard:</p>
+  <p><code>python -m streamlit run dashboard_operadores.py</code></p>
+
+  <h2>8. Pontos de Atenção</h2>
+  <ul>
+    <li>A região vem principalmente da base de resultados, não dos eventos.</li>
+    <li>CPC e acordo são cruzados por operador e contrato para evitar taxas artificiais acima de 100%.</li>
+    <li>O valor recebido é uma regra gerencial baseada em pagamento identificado, não uma coluna financeira independente.</li>
+    <li>Quando novos arquivos forem adicionados, o cache do Streamlit pode precisar ser limpo ou o app reiniciado.</li>
+  </ul>
+
+  <h2>9. Leitura Gerencial Recomendada</h2>
+  <p>
+    A gestão deve usar o dashboard para comparar volume com eficiência. Um operador com muitos acionamentos e poucos CPCs
+    pode precisar rever abordagem ou carteira. Um operador com muitos CPCs e poucos acordos pode precisar de apoio em
+    negociação. Um operador com muitos acordos sem pagamento pode precisar melhorar validação de intenção de pagamento,
+    follow-up ou qualidade de fechamento.
+  </p>
+
+  <p>
+    A aba CPC é a mais indicada para avaliar qualidade de negociação, pois conecta contato produtivo, acordo e pagamento
+    no nível de operador e contrato.
+  </p>
+</body>
+</html>
