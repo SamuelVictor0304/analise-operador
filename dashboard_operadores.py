@@ -53,6 +53,7 @@ FIELD_HELP = {
     "contatos_efetivos": ("Contatos efetivos", "Mesmo critério de CPC: eventos iniciados por 02, 03, 04 ou 05."),
     "contatos_cliente": ("Contatos cliente", "Eventos iniciados por 02 ou 03, contato direto com cliente."),
     "cpcs": ("CPCs", "Eventos produtivos iniciados por 02, 03, 04 ou 05."),
+    "cpcs_unicos": ("CPCs únicos", "Contratos distintos com pelo menos um CPC por operador. Remove acionamentos repetidos do mesmo contrato."),
     "clientes_cpc": ("Clientes com CPC", "Contratos distintos que tiveram ao menos um CPC."),
     "contratos_cpc": ("Contratos com CPC", "Contratos distintos que tiveram ao menos um CPC."),
     "acordos": ("Acordos", "Quantidade de acordos localizados na base de resultados."),
@@ -68,6 +69,8 @@ FIELD_HELP = {
     "tx_sem_pagamento": ("Taxa sem pagamento", "Acordos sem pagamento divididos pelo total de acordos."),
     "tx_cpc_acordo": ("Taxa CPC -> acordo", "Contratos com CPC que geraram acordo, divididos pelos contratos com CPC."),
     "tx_cpc_pagamento": ("Taxa CPC -> pagamento", "Contratos com CPC que geraram pagamento, divididos pelos contratos com CPC."),
+    "tx_cpc_unico_acordo": ("Taxa CPC único -> acordo", "Contratos únicos com CPC que geraram acordo, divididos pelos contratos únicos com CPC."),
+    "tx_cpc_unico_pagamento": ("Taxa CPC único -> pagamento", "Contratos únicos com CPC que geraram pagamento, divididos pelos contratos únicos com CPC."),
     "tx_acordo_pagamento": ("Taxa acordo -> pagamento", "Pagamentos divididos pelos acordos originados em contratos com CPC."),
     "tx_acordo_sem_pagamento": ("Taxa acordo sem pagamento", "Acordos sem pagamento divididos pelos acordos originados em contratos com CPC."),
     "valor_negociado": ("Valor negociado", "Soma da coluna VALOR DO BANCO - META da base de resultados."),
@@ -530,6 +533,7 @@ def aggregate_cpc_operator(eventos, resultados):
         clientes_cpc=("CONTRATO_KEY", "nunique"),
         contratos_cpc=("CONTRATO_KEY", "nunique"),
     )
+    ev["cpcs_unicos"] = ev["contratos_cpc"]
     cpc_contratos = cpc_eventos[["OPERADOR", "CONTRATO_KEY"]].dropna().drop_duplicates()
     resultado_contrato = resultados.groupby(["OPERADOR", "CONTRATO_KEY"], dropna=True).agg(
         qtd_acordos=("CONTRATO_KEY", "count"),
@@ -568,6 +572,8 @@ def aggregate_cpc_operator(eventos, resultados):
     df["ticket_medio"] = safe_div(df["valor_negociado"], df["acordos"])
     df["tx_cpc_acordo"] = safe_div(df["acordos"], df["contratos_cpc"])
     df["tx_cpc_pagamento"] = safe_div(df["pagamentos"], df["contratos_cpc"])
+    df["tx_cpc_unico_acordo"] = safe_div(df["acordos"], df["cpcs_unicos"])
+    df["tx_cpc_unico_pagamento"] = safe_div(df["pagamentos"], df["cpcs_unicos"])
     df["tx_acordo_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["tx_acordo_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
@@ -677,6 +683,8 @@ def display_fields(df):
         "tx_sem_pagamento",
         "tx_cpc_acordo",
         "tx_cpc_pagamento",
+        "tx_cpc_unico_acordo",
+        "tx_cpc_unico_pagamento",
         "tx_acordo_pagamento",
         "tx_acordo_sem_pagamento",
         "recuperacao",
@@ -690,6 +698,7 @@ def display_fields(df):
         "contatos_efetivos",
         "contatos_cliente",
         "cpcs",
+        "cpcs_unicos",
         "clientes_cpc",
         "contratos_cpc",
         "acordos",
@@ -734,6 +743,8 @@ def formatted_table(df):
         "tx_sem_pagamento",
         "tx_cpc_acordo",
         "tx_cpc_pagamento",
+        "tx_cpc_unico_acordo",
+        "tx_cpc_unico_pagamento",
         "tx_acordo_pagamento",
         "tx_acordo_sem_pagamento",
         "recuperacao",
@@ -749,6 +760,7 @@ def formatted_table(df):
         "contatos_efetivos",
         "contatos_cliente",
         "cpcs",
+        "cpcs_unicos",
         "clientes_cpc",
         "contratos_cpc",
         "acordos",
@@ -975,38 +987,40 @@ with tabs[2]:
     st.subheader("Conversão CPC para acordos e pagamentos")
     st.caption("CPC considerado pelos eventos iniciados por 02, 03, 04 e 05.")
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
         metric_card("CPCs", num_fmt(cpc_df["cpcs"].sum()))
     with c2:
-        metric_card("Acordos após CPC", num_fmt(cpc_df["acordos"].sum()))
+        metric_card("CPCs únicos", num_fmt(cpc_df["cpcs_unicos"].sum()))
     with c3:
-        metric_card("Pagamentos", num_fmt(cpc_df["pagamentos"].sum()))
+        metric_card("Acordos após CPC", num_fmt(cpc_df["acordos"].sum()))
     with c4:
-        metric_card("Acordos sem pagamento", num_fmt(cpc_df["acordos_sem_pagamento"].sum()))
+        metric_card("Pagamentos", num_fmt(cpc_df["pagamentos"].sum()))
     with c5:
-        metric_card("Em aberto", num_fmt(cpc_df["acordos_em_aberto"].sum()))
+        metric_card("Acordos sem pagamento", num_fmt(cpc_df["acordos_sem_pagamento"].sum()))
     with c6:
+        metric_card("Em aberto", num_fmt(cpc_df["acordos_em_aberto"].sum()))
+    with c7:
         metric_card("Não pagou", num_fmt(cpc_df["acordos_nao_pagou"].sum()))
 
     c1, c2 = st.columns(2)
     with c1:
-        cpc_chart = display_fields(cpc_df[cpc_df["cpcs"] > 0].sort_values("tx_cpc_acordo", ascending=False).head(15))
+        cpc_chart = display_fields(cpc_df[cpc_df["cpcs_unicos"] > 0].sort_values("tx_cpc_unico_acordo", ascending=False).head(15))
         bar_chart(
             cpc_chart,
-            x=alt.X("tx_cpc_acordo:Q", axis=alt.Axis(format="%")),
+            x=alt.X("tx_cpc_unico_acordo:Q", axis=alt.Axis(format="%")),
             y="OPERADOR:N",
-            tooltip=["OPERADOR", "cpcs_br", "acordos_br", "tx_cpc_acordo_br", "valor_negociado_br"],
-            title="Conversão CPC -> acordo por negociador",
+            tooltip=["OPERADOR", "cpcs_br", "cpcs_unicos_br", "acordos_br", "tx_cpc_unico_acordo_br", "valor_negociado_br"],
+            title="Conversão CPC único -> acordo por negociador",
         )
     with c2:
-        cpc_pag_chart = display_fields(cpc_df[cpc_df["cpcs"] > 0].sort_values("tx_cpc_pagamento", ascending=False).head(15))
+        cpc_pag_chart = display_fields(cpc_df[cpc_df["cpcs_unicos"] > 0].sort_values("tx_cpc_unico_pagamento", ascending=False).head(15))
         bar_chart(
             cpc_pag_chart,
-            x=alt.X("tx_cpc_pagamento:Q", axis=alt.Axis(format="%")),
+            x=alt.X("tx_cpc_unico_pagamento:Q", axis=alt.Axis(format="%")),
             y="OPERADOR:N",
-            tooltip=["OPERADOR", "cpcs_br", "pagamentos_br", "tx_cpc_pagamento_br", "valor_pago_br"],
-            title="Conversão CPC -> pagamento por negociador",
+            tooltip=["OPERADOR", "cpcs_br", "cpcs_unicos_br", "pagamentos_br", "tx_cpc_unico_pagamento_br", "valor_pago_br"],
+            title="Conversão CPC único -> pagamento por negociador",
         )
 
     c1, c2 = st.columns(2)
@@ -1026,22 +1040,23 @@ with tabs[2]:
             title="Acordos convertidos sem pagamento",
         )
     with c2:
-        cpc_scatter = display_fields(cpc_df[(cpc_df["cpcs"] > 0) & (cpc_df["acordos"] > 0)])
+        cpc_scatter = display_fields(cpc_df[(cpc_df["cpcs_unicos"] > 0) & (cpc_df["acordos"] > 0)])
         scatter = (
             alt.Chart(cpc_scatter)
             .mark_circle(size=130, opacity=0.78)
             .encode(
-                x=alt.X("tx_cpc_acordo:Q", title="CPC -> acordo", axis=alt.Axis(format="%")),
+                x=alt.X("tx_cpc_unico_acordo:Q", title="CPC único -> acordo", axis=alt.Axis(format="%")),
                 y=alt.Y("tx_acordo_pagamento:Q", title="Acordo -> pagamento", axis=alt.Axis(format="%")),
                 size=alt.Size("valor_pago:Q", title="Valor recebido"),
                 color=alt.Color("acordos_sem_pagamento:Q", scale=alt.Scale(scheme="orangered"), title="Sem pagamento"),
                 tooltip=[
                     "OPERADOR",
                     "cpcs_br",
+                    "cpcs_unicos_br",
                     "acordos_br",
                     "pagamentos_br",
                     "acordos_sem_pagamento_br",
-                    "tx_cpc_acordo_br",
+                    "tx_cpc_unico_acordo_br",
                     "tx_acordo_pagamento_br",
                     "valor_pago_br",
                 ],
@@ -1054,6 +1069,7 @@ with tabs[2]:
     cpc_cols = [
         "OPERADOR",
         "cpcs",
+        "cpcs_unicos",
         "clientes_cpc",
         "acordos",
         "pagamentos",
@@ -1062,6 +1078,8 @@ with tabs[2]:
         "acordos_nao_pagou",
         "tx_cpc_acordo",
         "tx_cpc_pagamento",
+        "tx_cpc_unico_acordo",
+        "tx_cpc_unico_pagamento",
         "tx_acordo_pagamento",
         "tx_acordo_sem_pagamento",
         "valor_negociado",
