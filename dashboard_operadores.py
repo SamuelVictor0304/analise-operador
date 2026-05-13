@@ -12,6 +12,8 @@ BASE_DIR = Path(__file__).parent
 EVENTOS_FILE = BASE_DIR / "Cobmais-Eventos-908-2026050417.xlsx"
 RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
+EXCLUDED_OPERATORS = {"samuel.levi"}
+EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
 
 
 def latest_file(pattern):
@@ -154,6 +156,13 @@ def normalize_operator(value):
     return text if text else np.nan
 
 
+def is_excluded_operator(value):
+    text = normalize_operator(value)
+    if pd.isna(text):
+        return False
+    return text in EXCLUDED_OPERATORS or any(text.startswith(prefix) for prefix in EXCLUDED_OPERATOR_PREFIXES)
+
+
 def atraso_faixa(days):
     if pd.isna(days):
         return "Sem atraso"
@@ -241,6 +250,7 @@ def load_collaborators():
         )
         base = base[base["OPERADOR"].notna()]
         base = base[~base["OPERADOR"].isin(["escritório", "escritorio"])]
+        base = base[~base["OPERADOR"].map(is_excluded_operator)]
         frames.append(base)
 
     if not frames:
@@ -437,6 +447,7 @@ def load_data():
 
     eventos["CONTRATO_KEY"] = eventos["CONTRATO"].map(normalize_contract)
     eventos["OPERADOR"] = eventos["OPERADOR"].map(normalize_operator)
+    eventos = eventos[~eventos["OPERADOR"].map(is_excluded_operator)].copy()
     eventos["DATA"] = pd.to_datetime(eventos["DATA"], dayfirst=True, errors="coerce")
     eventos["EVENTO_TXT"] = eventos["EVENTO"].map(normalize_text)
     eventos["EVENTO_UPPER"] = eventos["EVENTO_TXT"].str.upper()
@@ -472,6 +483,7 @@ def load_data():
 
     resultados["CONTRATO_KEY"] = resultados["Nº CONTRATO"].map(normalize_contract)
     resultados["OPERADOR"] = resultados["ACORDO POR"].map(normalize_operator)
+    resultados = resultados[~resultados["OPERADOR"].map(is_excluded_operator)].copy()
     resultados["DATA_ACORDO"] = pd.to_datetime(resultados["EMISSÃO"], errors="coerce")
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
