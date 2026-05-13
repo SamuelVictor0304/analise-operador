@@ -1,4 +1,5 @@
 from pathlib import Path
+from html import escape
 import re
 
 import altair as alt
@@ -24,6 +25,43 @@ st.set_page_config(
     page_title="Performance Operacional",
     layout="wide",
     initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    div[data-testid="stMetric"] {
+        overflow: visible;
+    }
+    .metric-card {
+        min-height: 96px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 8px;
+        padding: 12px 14px;
+        background: rgba(15, 23, 42, 0.18);
+    }
+    .metric-card__label {
+        margin-bottom: 8px;
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 0.82rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .metric-card__value {
+        color: #ffffff;
+        font-size: 1.48rem;
+        font-weight: 650;
+        line-height: 1.18;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+    .metric-card--compact .metric-card__value {
+        font-size: 1.28rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -599,7 +637,18 @@ def aggregate_resultados(resultados, dimension):
 
 
 def metric_card(label, value, help_text=None):
-    st.metric(label, value, help=help_text)
+    value_text = str(value)
+    title = help_text or f"{label}: {value_text}"
+    compact_class = " metric-card--compact" if len(value_text) >= 14 else ""
+    st.markdown(
+        f"""
+        <div class="metric-card{compact_class}" title="{escape(title)}">
+            <div class="metric-card__label">{escape(str(label))}</div>
+            <div class="metric-card__value">{escape(value_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def bar_chart(df, x, y, color=None, tooltip=None, title=None, sort="-x", height=320):
@@ -833,26 +882,27 @@ valor_pago = resultados["VALOR_PAGO"].sum()
 valor_em_aberto = resultados["VALOR_EM_ABERTO"].sum()
 valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
 
-kpi_cols = st.columns(10)
-with kpi_cols[0]:
+kpi_row1 = st.columns(5)
+kpi_row2 = st.columns(5)
+with kpi_row1[0]:
     metric_card("Clientes", num_fmt(total_clientes))
-with kpi_cols[1]:
+with kpi_row1[1]:
     metric_card("Acionamentos", num_fmt(total_acionamentos))
-with kpi_cols[2]:
+with kpi_row1[2]:
     metric_card("Contatos efetivos", num_fmt(total_contatos))
-with kpi_cols[3]:
+with kpi_row1[3]:
     metric_card("Acordos", num_fmt(total_acordos))
-with kpi_cols[4]:
+with kpi_row1[4]:
     metric_card("Pagamentos", num_fmt(total_pagamentos))
-with kpi_cols[5]:
+with kpi_row2[0]:
     metric_card("Em aberto", num_fmt(total_em_aberto))
-with kpi_cols[6]:
+with kpi_row2[1]:
     metric_card("Não pagou", num_fmt(total_nao_pagou))
-with kpi_cols[7]:
+with kpi_row2[2]:
     metric_card("Negociado", money_fmt(valor_negociado))
-with kpi_cols[8]:
+with kpi_row2[3]:
     metric_card("Recebido", money_fmt(valor_pago))
-with kpi_cols[9]:
+with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
 tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Metas", "Insights"])
