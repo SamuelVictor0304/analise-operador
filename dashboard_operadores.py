@@ -345,9 +345,11 @@ def load_office_received():
     return {k: float(v) for k, v in received.items() if pd.notna(v)}
 
 
-def build_meta_analysis(operador_df, resultados):
+def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     metas_gerais = load_office_goals()
     colaboradores = load_collaborators()
+    if operadores_scope:
+        colaboradores = colaboradores[colaboradores["OPERADOR"].isin(operadores_scope)].copy()
     meses = selected_months(resultados)
     meses_count = max(len(meses), 1)
     meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
@@ -575,7 +577,7 @@ def apply_filters(eventos, resultados):
     if not incluir_auto:
         eventos = eventos[eventos["IS_ACIONAMENTO"]]
 
-    return eventos, resultados
+    return eventos, resultados, operador_sel
 
 
 def aggregate_operator(eventos, resultados):
@@ -915,7 +917,7 @@ def glossary():
 
 
 eventos_raw, contratos_raw, resultados_raw = load_data()
-eventos, resultados = apply_filters(eventos_raw, resultados_raw)
+eventos, resultados, operadores_filtrados = apply_filters(eventos_raw, resultados_raw)
 operador_df = aggregate_operator(eventos, resultados)
 cpc_df = aggregate_cpc_operator(eventos, resultados)
 
@@ -1314,7 +1316,7 @@ with tabs[6]:
     st.subheader("Metas e quartis de atingimento")
     st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
 
-    metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados)
+    metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebidos_escritorio = load_office_received()
     recebido_meta_geral = sum(recebidos_escritorio.get(mes, 0) for mes in meses_meta)
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
