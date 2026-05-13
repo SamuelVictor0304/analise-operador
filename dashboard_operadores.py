@@ -294,6 +294,47 @@ def load_office_goals():
     return {k: float(v) for k, v in goals.items() if pd.notna(v)}
 
 
+@st.cache_data(show_spinner=False)
+def load_office_received():
+    metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
+    header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
+    if len(header_idx) == 0:
+        return {}
+
+    header_row = header_idx[0]
+    headers = metas.iloc[header_row].map(normalize_text).str.upper().tolist()
+    totals = metas.iloc[header_row + 1:].copy()
+    total_rows = totals[totals.iloc[:, 0].astype(str).str.strip().str.upper().eq("TOTAL")]
+    if total_rows.empty:
+        return {}
+
+    total_row = total_rows.iloc[0]
+    received = {}
+    months = [
+        "JANEIRO",
+        "FEVEREIRO",
+        "MARÇO",
+        "ABRIL",
+        "MAIO",
+        "JUNHO",
+        "JULHO",
+        "AGOSTO",
+        "SETEMBRO",
+        "OUTUBRO",
+        "NOVEMBRO",
+        "DEZEMBRO",
+    ]
+    for month in months:
+        target_col = None
+        for i, header in enumerate(headers):
+            if header == month:
+                target_col = i
+                break
+        if target_col is not None:
+            received[month] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
+    return {k: float(v) for k, v in received.items() if pd.notna(v)}
+
+
 def build_meta_analysis(operador_df, resultados):
     metas_gerais = load_office_goals()
     colaboradores = load_collaborators()
@@ -1262,6 +1303,8 @@ with tabs[6]:
     st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados)
+    recebidos_escritorio = load_office_received()
+    recebido_meta_geral = sum(recebidos_escritorio.get(mes, 0) for mes in meses_meta)
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1270,9 +1313,9 @@ with tabs[6]:
     with c2:
         metric_card("Meta geral escritório", money_fmt(meta_geral))
     with c3:
-        metric_card("Recebido", money_fmt(metas_df["valor_pago"].sum()))
+        metric_card("Recebido", money_fmt(recebido_meta_geral))
     with c4:
-        metric_card("% meta geral", pct_fmt(metas_df["valor_pago"].sum() / meta_geral if meta_geral else 0))
+        metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
