@@ -86,6 +86,7 @@ MONTH_NAMES_PT = {
 FIELD_HELP = {
     "OPERADOR": ("Operador", "Negociador responsável pelo evento ou acordo."),
     "FAIXA_ATRASO": ("Faixa de atraso", "Agrupamento do atraso/DPD do contrato em faixas gerenciais."),
+    "SEGMENTO_DPD": ("Segmento DPD", "Classificação do contrato por DPD: POTLOSS 1-720, SALVAGE 721-1440 e SALVAGE + acima de 1440."),
     "REGIÃO": ("Região", "Região cadastrada na base de resultados."),
     "clientes": ("Clientes", "Quantidade distinta de contratos/clientes no agrupamento."),
     "clientes_trabalhados": ("Clientes trabalhados", "Quantidade distinta de contratos acionados pelo operador."),
@@ -180,6 +181,19 @@ def atraso_faixa(days):
     if days <= 360:
         return "181-360"
     return "361+"
+
+
+def segmento_dpd(days):
+    if pd.isna(days):
+        return "Sem DPD"
+    days = float(days)
+    if days < 1:
+        return "Sem DPD"
+    if days <= 720:
+        return "POTLOSS"
+    if days <= 1440:
+        return "SALVAGE"
+    return "SALVAGE +"
 
 
 def money_fmt(value):
@@ -460,6 +474,7 @@ def load_data():
     contratos["ATRASO"] = pd.to_numeric(contratos["ATRASO"], errors="coerce")
     contratos["TOTAL ABERTO"] = pd.to_numeric(contratos["TOTAL ABERTO"], errors="coerce")
     contratos["FAIXA_ATRASO"] = contratos["ATRASO"].map(atraso_faixa)
+    contratos["SEGMENTO_DPD"] = contratos["ATRASO"].map(segmento_dpd)
 
     contrato_cols = [
         "CONTRATO_KEY",
@@ -470,6 +485,7 @@ def load_data():
         "ATRASO",
         "TOTAL ABERTO",
         "FAIXA_ATRASO",
+        "SEGMENTO_DPD",
     ]
     contrato_cols = [c for c in contrato_cols if c in contratos.columns]
     contratos_lookup = contratos[contrato_cols].drop_duplicates("CONTRATO_KEY")
@@ -492,6 +508,7 @@ def load_data():
     resultados["HONORARIOS"] = pd.to_numeric(resultados["HONORÁRIOS %"], errors="coerce").fillna(0)
     resultados["DPD"] = pd.to_numeric(resultados["DPD"], errors="coerce")
     resultados["FAIXA_ATRASO"] = resultados["DPD"].map(atraso_faixa)
+    resultados["SEGMENTO_DPD"] = resultados["DPD"].map(segmento_dpd)
     resultados["REGIÃO"] = resultados["REGIÃO"].fillna(resultados.get("UF", "Sem região")).map(normalize_text)
     resultados["UF"] = resultados["UF"].map(normalize_text)
     resultados["CAMPANHA"] = resultados["CAMPANHA"].map(normalize_text)
@@ -518,6 +535,7 @@ def apply_filters(eventos, resultados):
     operadores = sorted(set(eventos["OPERADOR"].dropna()) | set(resultados["OPERADOR"].dropna()))
     regioes = sorted(resultados["REGIÃO"].replace("", np.nan).dropna().unique())
     faixas = ["000-030", "031-060", "061-090", "091-120", "121-180", "181-360", "361+", "Sem atraso"]
+    segmentos_dpd = ["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"]
     campanhas = sorted(resultados["CAMPANHA"].replace("", np.nan).dropna().unique())
     produtos = sorted(eventos.get("PRODUTO", pd.Series(dtype=str)).replace("", np.nan).dropna().unique())
     meses_df = (
@@ -542,6 +560,7 @@ def apply_filters(eventos, resultados):
     mes_sel = st.sidebar.multiselect("Mês do resultado", meses, default=mes_padrao)
     regiao_sel = st.sidebar.multiselect("Região", regioes)
     faixa_sel = st.sidebar.multiselect("Faixa de atraso", faixas)
+    segmento_dpd_sel = st.sidebar.multiselect("Segmento DPD", segmentos_dpd)
     campanha_sel = st.sidebar.multiselect("Campanha", campanhas)
     produto_sel = st.sidebar.multiselect("Produto", produtos)
     incluir_auto = st.sidebar.toggle("Incluir AUTO/importação nos acionamentos", value=False)
@@ -568,6 +587,9 @@ def apply_filters(eventos, resultados):
     if faixa_sel:
         eventos = eventos[eventos["FAIXA_ATRASO"].isin(faixa_sel)]
         resultados = resultados[resultados["FAIXA_ATRASO"].isin(faixa_sel)]
+    if segmento_dpd_sel:
+        eventos = eventos[eventos["SEGMENTO_DPD"].isin(segmento_dpd_sel)]
+        resultados = resultados[resultados["SEGMENTO_DPD"].isin(segmento_dpd_sel)]
     if campanha_sel:
         resultados = resultados[resultados["CAMPANHA"].isin(campanha_sel)]
         contratos_campanha = set(resultados["CONTRATO_KEY"].dropna())
@@ -960,7 +982,7 @@ with kpi_row2[3]:
 with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "Região", "Matriz", "Metas", "Insights"])
+tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Insights"])
 
 with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
@@ -1242,6 +1264,62 @@ with tabs[3]:
     data_table(best_faixa)
 
 with tabs[4]:
+    segmento_df = aggregate_resultados(resultados, "SEGMENTO_DPD")
+    ev_segmento = eventos.groupby("SEGMENTO_DPD").agg(
+        acionamentos=("EVENTO_TXT", "size"),
+        contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
+    ).reset_index()
+    segmento_df = segmento_df.merge(ev_segmento, on="SEGMENTO_DPD", how="outer").fillna(0)
+    segmento_df["tx_contato"] = safe_div(segmento_df["contatos_efetivos"], segmento_df["acionamentos"])
+    segmento_order = ["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"]
+    segmento_df["SEGMENTO_DPD"] = pd.Categorical(segmento_df["SEGMENTO_DPD"], categories=segmento_order, ordered=True)
+    segmento_df = segmento_df.sort_values("SEGMENTO_DPD")
+    segmento_chart = display_fields(segmento_df)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        bar_chart(
+            segmento_chart,
+            x="valor_pago:Q",
+            y="SEGMENTO_DPD:N",
+            tooltip=["SEGMENTO_DPD", "valor_pago_br", "valor_negociado_br", "acordos_br", "pagamentos_br", "recuperacao_br"],
+            title="Valor recebido por segmento DPD",
+            sort=segmento_order,
+        )
+    with c2:
+        bar_chart(
+            segmento_chart,
+            x=alt.X("tx_pagamento:Q", axis=alt.Axis(format="%")),
+            y="SEGMENTO_DPD:N",
+            tooltip=["SEGMENTO_DPD", "tx_pagamento_br", "acordos_br", "pagamentos_br", "tx_contato_br"],
+            title="Conversão acordo/pagamento por segmento DPD",
+            sort=segmento_order,
+        )
+
+    best_segmento = (
+        resultados.groupby(["SEGMENTO_DPD", "OPERADOR"])
+        .agg(
+            acordos=("CONTRATO_KEY", "count"),
+            pagamentos=("IS_PAGO", "sum"),
+            acordos_em_aberto=("IS_EM_ABERTO", "sum"),
+            acordos_nao_pagou=("IS_NAO_PAGOU", "sum"),
+            valor_pago=("VALOR_PAGO", "sum"),
+            valor_em_aberto=("VALOR_EM_ABERTO", "sum"),
+            valor_nao_pagou=("VALOR_NAO_PAGOU", "sum"),
+            valor_negociado=("VALOR_NEGOCIADO", "sum"),
+        )
+        .reset_index()
+    )
+    best_segmento["tx_pagamento"] = safe_div(best_segmento["pagamentos"], best_segmento["acordos"])
+    best_segmento["recuperacao"] = safe_div(best_segmento["valor_pago"], best_segmento["valor_negociado"])
+    best_segmento = best_segmento.sort_values(["SEGMENTO_DPD", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("SEGMENTO_DPD").head(3)
+    st.subheader("Top operadores por segmento DPD")
+    data_table(best_segmento)
+
+    st.subheader("Resumo por segmento DPD")
+    data_table(segmento_df[["SEGMENTO_DPD", "clientes", "acionamentos", "contatos_efetivos", "tx_contato", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
+
+with tabs[5]:
     regiao_df = aggregate_resultados(resultados, "REGIÃO").sort_values("valor_pago", ascending=False)
     regiao_chart = display_fields(regiao_df)
     c1, c2 = st.columns(2)
@@ -1281,7 +1359,7 @@ with tabs[4]:
     st.subheader("Top operadores por região")
     data_table(best_regiao)
 
-with tabs[5]:
+with tabs[6]:
     matrix = (
         resultados.groupby(["OPERADOR", "FAIXA_ATRASO", "REGIÃO"])
         .agg(
@@ -1312,7 +1390,7 @@ with tabs[5]:
     st.subheader("Matriz analítica por operador, faixa e região")
     data_table(matrix.sort_values(["valor_pago", "pagamentos"], ascending=False))
 
-with tabs[6]:
+with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
     st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
 
@@ -1392,12 +1470,14 @@ with tabs[6]:
     ]
     data_table(metas_df[meta_cols])
 
-with tabs[7]:
+with tabs[8]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
     oportunidades = operador_df[(operador_df["acionamentos"] >= operador_df["acionamentos"].median()) & (operador_df["score"] < avg_score)].sort_values("acionamentos", ascending=False)
     destaques = operador_df[operador_df["score"] >= operador_df["score"].quantile(0.75)].sort_values("score", ascending=False)
     faixas_oportunidade = aggregate_resultados(resultados, "FAIXA_ATRASO")
     faixas_oportunidade = faixas_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
+    segmentos_oportunidade = aggregate_resultados(resultados, "SEGMENTO_DPD")
+    segmentos_oportunidade = segmentos_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
 
     c1, c2 = st.columns(2)
     with c1:
@@ -1409,3 +1489,6 @@ with tabs[7]:
 
     st.subheader("Faixas com maior oportunidade de recuperação")
     data_table(faixas_oportunidade[["FAIXA_ATRASO", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
+
+    st.subheader("Segmentos DPD com maior oportunidade de recuperação")
+    data_table(segmentos_oportunidade[["SEGMENTO_DPD", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
