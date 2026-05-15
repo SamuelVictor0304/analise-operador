@@ -16,10 +16,10 @@ COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
 POSTGRES_DEFAULTS = {
-    "host": "localhost",
+    "host": "",
     "port": 5432,
-    "database": "postgres",
-    "user": "postgres",
+    "database": "",
+    "user": "",
     "password": "",
     "schema": "workplan",
     "table": "casos_workplan",
@@ -248,9 +248,31 @@ def safe_div(num, den):
     return np.where(den == 0, 0, num / den)
 
 
+def streamlit_secret_section(name):
+    try:
+        return st.secrets.get(name, {})
+    except Exception:
+        return {}
+
+
 def postgres_config():
-    secrets = st.secrets.get("postgres", {}) if hasattr(st, "secrets") else {}
+    secrets = streamlit_secret_section("postgres")
+    database_url = os.getenv("DATABASE_URL", secrets.get("database_url", secrets.get("url", "")))
+    has_connection_parts = any(
+        [
+            os.getenv("PGHOST"),
+            os.getenv("PGDATABASE"),
+            os.getenv("PGUSER"),
+            os.getenv("PGPASSWORD"),
+            secrets.get("host"),
+            secrets.get("database"),
+            secrets.get("user"),
+            secrets.get("password"),
+        ]
+    )
     return {
+        "database_url": database_url,
+        "configured": bool(database_url or has_connection_parts),
         "host": os.getenv("PGHOST", secrets.get("host", POSTGRES_DEFAULTS["host"])),
         "port": int(os.getenv("PGPORT", secrets.get("port", POSTGRES_DEFAULTS["port"]))),
         "database": os.getenv("PGDATABASE", secrets.get("database", POSTGRES_DEFAULTS["database"])),
@@ -500,6 +522,12 @@ def load_workplan():
         return pd.DataFrame(), "Driver psycopg2-binary não instalado."
 
     cfg = postgres_config()
+    if not cfg["configured"]:
+        return (
+            pd.DataFrame(),
+            "Workplan nao configurado. Configure DATABASE_URL ou PGHOST/PGDATABASE/PGUSER/PGPASSWORD nas variaveis de ambiente ou em st.secrets.",
+        )
+
     query = f"""
         SELECT
             agreement_no,
@@ -526,17 +554,30 @@ def load_workplan():
         FROM "{cfg['schema']}"."{cfg['table']}"
     """
     try:
-        conn = psycopg2.connect(
-            host=cfg["host"],
-            port=cfg["port"],
-            dbname=cfg["database"],
-            user=cfg["user"],
-            password=cfg["password"],
-        )
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        if cfg["database_url"]:
+            conn = psycopg2.connect(cfg["database_url"])
+        else:
+            conn = psycopg2.connect(
+                host=cfg["host"],
+                port=cfg["port"],
+                dbname=cfg["database"],
+                user=cfg["user"],
+                password=cfg["password"],
+            )
+        with conn:
+            df = pd.read_sql_query(query, conn)
     except Exception as exc:
+        host = str(cfg.get("host", "")).lower()
+        message = str(exc)
+        if host in {"localhost", "127.0.0.1", "::1"} and "connection refused" in message.lower():
+            return (
+                pd.DataFrame(),
+                "PostgreSQL local nao esta acessivel a partir deste ambiente. Em deploy, localhost aponta para o servidor do Streamlit; configure um host externo em PGHOST ou DATABASE_URL.",
+            )
         return pd.DataFrame(), f"Não foi possível carregar o Workplan: {exc}"
+    finally:
+        if "conn" in locals():
+            conn.close()
 
     df.columns = [normalize_text(c).lower() for c in df.columns]
     df["CONTRATO_KEY"] = df["agreement_no"].map(normalize_contract)
