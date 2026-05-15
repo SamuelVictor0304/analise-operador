@@ -272,11 +272,22 @@ def streamlit_secret_section(name):
         return {}
 
 
+def streamlit_secret_value(name, default=""):
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
 def postgres_config():
     secrets = streamlit_secret_section("postgres")
     database_url = (
         os.getenv("SUPABASE_DB_URL")
         or os.getenv("DATABASE_URL")
+        or streamlit_secret_value("SUPABASE_DB_URL")
+        or streamlit_secret_value("supabase_db_url")
+        or streamlit_secret_value("DATABASE_URL")
+        or streamlit_secret_value("database_url")
         or secrets.get("database_url", secrets.get("url", ""))
     )
     has_connection_parts = any(
