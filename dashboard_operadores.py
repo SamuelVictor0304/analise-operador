@@ -274,7 +274,11 @@ def streamlit_secret_section(name):
 
 def postgres_config():
     secrets = streamlit_secret_section("postgres")
-    database_url = os.getenv("DATABASE_URL", secrets.get("database_url", secrets.get("url", "")))
+    database_url = (
+        os.getenv("SUPABASE_DB_URL")
+        or os.getenv("DATABASE_URL")
+        or secrets.get("database_url", secrets.get("url", ""))
+    )
     has_connection_parts = any(
         [
             os.getenv("PGHOST"),
@@ -542,7 +546,7 @@ def load_workplan():
     if not cfg["configured"]:
         return (
             pd.DataFrame(),
-            "Workplan nao configurado. Configure DATABASE_URL ou PGHOST/PGDATABASE/PGUSER/PGPASSWORD nas variaveis de ambiente ou em st.secrets.",
+            "Workplan nao configurado. Configure SUPABASE_DB_URL/DATABASE_URL ou PGHOST/PGDATABASE/PGUSER/PGPASSWORD nas variaveis de ambiente ou em st.secrets.",
         )
 
     query = f"""
@@ -590,7 +594,7 @@ def load_workplan():
         if host in {"localhost", "127.0.0.1", "::1"} and "connection refused" in message.lower():
             return (
                 pd.DataFrame(),
-                "PostgreSQL local nao esta acessivel a partir deste ambiente. Em deploy, localhost aponta para o servidor do Streamlit; configure um host externo em PGHOST ou DATABASE_URL.",
+                "PostgreSQL local nao esta acessivel a partir deste ambiente. Em deploy, localhost aponta para o servidor do Streamlit; configure SUPABASE_DB_URL ou DATABASE_URL com a connection string do Supabase.",
             )
         return pd.DataFrame(), f"Não foi possível carregar o Workplan: {exc}"
     finally:
