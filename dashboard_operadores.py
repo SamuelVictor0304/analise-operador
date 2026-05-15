@@ -1,5 +1,6 @@
 from pathlib import Path
 from html import escape
+from io import BytesIO
 import os
 import re
 
@@ -98,8 +99,10 @@ FIELD_HELP = {
     "FAIXA_ATRASO": ("Faixa de atraso", "Agrupamento do atraso/DPD do contrato em faixas gerenciais."),
     "SEGMENTO_DPD": ("Segmento DPD", "Classificação do contrato pela coluna Y/DPD Formula: POTLOSS 1-720, SALVAGE 721-1440 e SALVAGE + acima de 1440."),
     "prioridade_workplan": ("Prioridade", "Classificação do contrato no Workplan pelo score de recuperação."),
-    "score_recuperacao": ("Score recuperação", "Score de priorização futura combinando segmento, valor, histórico de CPC/acordo/pagamento e tempo sem contato."),
+    "score_recuperacao": ("Score recuperação", "Score de priorização futura combinando segmento, valor, histórico de CPC e tempo sem contato. Contratos com pagamento ou acordo em aberto são excluídos da recomendação."),
     "motivo_priorizacao": ("Motivo priorização", "Principais fatores que aumentaram a prioridade do contrato."),
+    "cpf_cnpj": ("CPF/CNPJ", "Documento do cliente conforme Workplan."),
+    "PRODUTO": ("Produto", "Produto/carteira localizado no histórico de contratos."),
     "total_amount_due": ("Valor em aberto", "Valor total em aberto do contrato no Workplan."),
     "dpd": ("DPD", "Dias de atraso do contrato no Workplan."),
     "dias_sem_contato": ("Dias sem contato", "Dias desde o último contato registrado no Workplan ou último acionamento no histórico."),
@@ -107,6 +110,16 @@ FIELD_HELP = {
     "cpcs_hist": ("CPCs históricos", "Quantidade de CPCs históricos localizados para o contrato."),
     "acordos_hist": ("Acordos históricos", "Quantidade de acordos históricos localizados para o contrato."),
     "pagamentos_hist": ("Pagamentos históricos", "Quantidade de pagamentos históricos localizados para o contrato."),
+    "carteira_elegivel": ("Carteira elegível", "Soma do valor em aberto dos contratos elegíveis no grupo."),
+    "contratos_elegiveis": ("Contratos elegíveis", "Quantidade de contratos elegíveis no grupo."),
+    "recuperacao_esperada": ("Recuperação esperada", "Carteira elegível ponderada pelas taxas históricas de contato, CPC, acordo, pagamento e percentual recuperado."),
+    "recuperacao_esperada_pct_carteira": ("% esperado da carteira", "Recuperação esperada dividida pela carteira elegível."),
+    "taxa_contato": ("Taxa acionamento -> contato", "Contatos com cliente divididos pelos acionamentos históricos no grupo."),
+    "taxa_cpc": ("Taxa contato -> CPC", "CPCs históricos divididos pelos contatos com cliente no grupo."),
+    "taxa_acordo": ("Taxa CPC -> acordo", "Acordos históricos divididos pelos CPCs históricos no grupo."),
+    "taxa_pagamento": ("Taxa acordo -> pagamento", "Pagamentos históricos divididos pelos acordos históricos no grupo."),
+    "percentual_medio_recuperado": ("% médio recuperado", "Valor pago histórico dividido pelo valor negociado histórico no grupo."),
+    "base_taxas": ("Base das taxas", "Indica se as taxas foram calculadas pelo grupo ou pela média geral por baixa amostra."),
     "flag_cobravel": ("Cobravel", "Indica se o contrato está marcado como cobrável no Workplan."),
     "status_cpc": ("Status CPC", "Status de CPC disponível no Workplan."),
     "REGIÃO": ("Região", "Região cadastrada na base de resultados."),
@@ -246,6 +259,10 @@ def num_fmt(value):
 
 def safe_div(num, den):
     return np.where(den == 0, 0, num / den)
+
+
+def scalar_safe_div(num, den):
+    return 0 if pd.isna(den) or den == 0 else num / den
 
 
 def streamlit_secret_section(name):
@@ -532,6 +549,7 @@ def load_workplan():
         SELECT
             agreement_no,
             cust_name,
+            cpf_cnpj,
             dpd,
             total_amount_due,
             last_contact_date,
@@ -581,6 +599,7 @@ def load_workplan():
 
     df.columns = [normalize_text(c).lower() for c in df.columns]
     df["CONTRATO_KEY"] = df["agreement_no"].map(normalize_contract)
+    df["cpf_cnpj"] = df["cpf_cnpj"].map(normalize_text)
     df["dpd"] = pd.to_numeric(df["dpd"], errors="coerce")
     df["total_amount_due"] = pd.to_numeric(df["total_amount_due"], errors="coerce").fillna(0)
     df["pct_of_margin_money"] = pd.to_numeric(df["pct_of_margin_money"], errors="coerce")
@@ -588,6 +607,9 @@ def load_workplan():
     for col in ["last_contact_date", "allocation_date", "last_marking_date"]:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     df["SEGMENTO_DPD"] = df["dpd"].map(segmento_dpd)
+    df["FAIXA_ATRASO"] = df["faixa_atraso"].map(normalize_text)
+    df["FAIXA_ATRASO"] = df["FAIXA_ATRASO"].where(df["FAIXA_ATRASO"].ne(""), df["dpd"].map(atraso_faixa))
+    df["REGIÃO"] = df["regiao"].map(normalize_text)
     df["flag_cobravel"] = df["flag_cobravel"].map(normalize_text).str.upper()
     df["flag_cpc"] = df["flag_cpc"].map(normalize_text).str.upper()
     df["status_cpc"] = df["status_cpc"].map(normalize_text)
@@ -604,6 +626,8 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
         cpcs_hist=("IS_CPC", "sum"),
         ultimo_acionamento=("DATA", "max"),
     ).reset_index()
+    eventos_perfil_cols = ["CONTRATO_KEY"] + [col for col in ["PRODUTO"] if col in eventos_hist.columns]
+    eventos_perfil = eventos_hist[eventos_perfil_cols].dropna(subset=["CONTRATO_KEY"]).drop_duplicates("CONTRATO_KEY")
     resultados_contrato = resultados_hist.groupby("CONTRATO_KEY", dropna=True).agg(
         acordos_hist=("CONTRATO_KEY", "count"),
         pagamentos_hist=("IS_PAGO", "sum"),
@@ -614,6 +638,7 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     ).reset_index()
 
     df = workplan.merge(eventos_contrato, on="CONTRATO_KEY", how="left")
+    df = df.merge(eventos_perfil, on="CONTRATO_KEY", how="left")
     df = df.merge(resultados_contrato, on="CONTRATO_KEY", how="left")
     fill_zero = [
         "acionamentos_hist",
@@ -636,19 +661,17 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     segmento_score = df["SEGMENTO_DPD"].map({"POTLOSS": 0.25, "SALVAGE": 0.16, "SALVAGE +": 0.08}).fillna(0)
     valor_score = pd.to_numeric(df["total_amount_due"], errors="coerce").rank(pct=True).fillna(0) * 0.22
     cpc_score = np.where((df["cpcs_hist"] > 0) | df["flag_cpc"].eq("SIM"), 0.16, 0)
-    acordo_score = np.where(df["acordos_hist"] > 0, 0.10, 0)
-    pagamento_score = np.where(df["pagamentos_hist"] > 0, 0.08, 0)
     contato_score = np.select(
         [
             df["dias_sem_contato"] >= 30,
             df["dias_sem_contato"] >= 15,
             df["dias_sem_contato"] >= 7,
         ],
-        [0.14, 0.10, 0.06],
-        default=0.02,
+        [0.20, 0.14, 0.08],
+        default=0.03,
     )
     cobravel_score = np.where(df["flag_cobravel"].eq("SIM"), 0.05, -0.20)
-    df["score_recuperacao"] = (segmento_score + valor_score + cpc_score + acordo_score + pagamento_score + contato_score + cobravel_score).clip(0, 1)
+    df["score_recuperacao"] = (segmento_score + valor_score + cpc_score + contato_score + cobravel_score).clip(0, 1)
     df["prioridade_workplan"] = np.select(
         [
             df["score_recuperacao"] >= 0.70,
@@ -667,10 +690,6 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
             parts.append("alto valor")
         if row["cpcs_hist"] > 0 or row["flag_cpc"] == "SIM":
             parts.append("histórico de CPC")
-        if row["acordos_hist"] > 0:
-            parts.append("já teve acordo")
-        if row["pagamentos_hist"] > 0:
-            parts.append("já teve pagamento")
         if row["dias_sem_contato"] >= 15:
             parts.append("sem contato recente")
         motivos.append(", ".join(parts) if parts else "baixo sinal histórico")
@@ -945,6 +964,149 @@ def aggregate_resultados(resultados, dimension):
     return df
 
 
+def group_label(df, columns):
+    cols = [columns] if isinstance(columns, str) else list(columns)
+    cols = [col for col in cols if col in df.columns]
+    if not cols:
+        return pd.Series("Sem grupo", index=df.index, dtype="object")
+    labels = df[cols].apply(lambda row: " | ".join(normalize_text(value) or "Sem grupo" for value in row), axis=1)
+    return labels.replace("", "Sem grupo")
+
+
+def valid_group_mask(df, columns):
+    cols = [columns] if isinstance(columns, str) else list(columns)
+    cols = [col for col in cols if col in df.columns]
+    if not cols:
+        return pd.Series(False, index=df.index)
+    mask = pd.Series(True, index=df.index)
+    for col in cols:
+        mask = mask & df[col].map(normalize_text).ne("")
+    return mask
+
+
+def add_projection_group(df, columns):
+    grouped = df[valid_group_mask(df, columns)].copy()
+    if grouped.empty:
+        return grouped
+    grouped["grupo"] = group_label(grouped, columns)
+    return grouped
+
+
+def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, workplan_col, eventos_col, resultados_col):
+    workplan_cols = [workplan_col] if isinstance(workplan_col, str) else list(workplan_col)
+    if workplan_view.empty or not any(col in workplan_view.columns for col in workplan_cols):
+        return pd.DataFrame()
+
+    carteira = add_projection_group(workplan_view, workplan_col)
+    if carteira.empty:
+        return pd.DataFrame()
+    carteira_df = (
+        carteira.groupby("grupo", dropna=False)
+        .agg(
+            contratos_elegiveis=("CONTRATO_KEY", "nunique"),
+            carteira_elegivel=("total_amount_due", "sum"),
+        )
+        .reset_index()
+    )
+
+    eventos_base = eventos_hist[eventos_hist["IS_ACIONAMENTO"]].copy()
+    eventos_cols = [eventos_col] if isinstance(eventos_col, str) else list(eventos_col)
+    if any(col in eventos_base.columns for col in eventos_cols):
+        eventos_base = eventos_base[valid_group_mask(eventos_base, eventos_col)].copy()
+        eventos_base["grupo"] = group_label(eventos_base, eventos_col)
+        eventos_df = (
+            eventos_base.groupby("grupo", dropna=False)
+            .agg(
+                acionamentos_hist=("EVENTO_TXT", "size"),
+                contatos_cliente_hist=("IS_CONTATO_CLIENTE", "sum"),
+                cpcs_hist=("IS_CPC", "sum"),
+            )
+            .reset_index()
+        )
+    else:
+        eventos_df = pd.DataFrame(columns=["grupo", "acionamentos_hist", "contatos_cliente_hist", "cpcs_hist"])
+
+    resultados_cols = [resultados_col] if isinstance(resultados_col, str) else list(resultados_col)
+    if any(col in resultados_hist.columns for col in resultados_cols):
+        resultados_base = resultados_hist[valid_group_mask(resultados_hist, resultados_col)].copy()
+        resultados_base["grupo"] = group_label(resultados_base, resultados_col)
+        resultados_df = (
+            resultados_base.groupby("grupo", dropna=False)
+            .agg(
+                acordos_hist=("CONTRATO_KEY", "count"),
+                pagamentos_hist=("IS_PAGO", "sum"),
+                valor_negociado_hist=("VALOR_NEGOCIADO", "sum"),
+                valor_pago_hist=("VALOR_PAGO", "sum"),
+            )
+            .reset_index()
+        )
+    else:
+        resultados_df = pd.DataFrame(columns=["grupo", "acordos_hist", "pagamentos_hist", "valor_negociado_hist", "valor_pago_hist"])
+
+    df = carteira_df.merge(eventos_df, on="grupo", how="left").merge(resultados_df, on="grupo", how="left")
+    fill_cols = [
+        "acionamentos_hist",
+        "contatos_cliente_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
+        "valor_negociado_hist",
+        "valor_pago_hist",
+    ]
+    for col in fill_cols:
+        df[col] = df[col].fillna(0)
+
+    global_rates = {
+        "taxa_contato": scalar_safe_div(eventos_base["IS_CONTATO_CLIENTE"].sum(), len(eventos_base)),
+        "taxa_cpc": scalar_safe_div(eventos_base["IS_CPC"].sum(), eventos_base["IS_CONTATO_CLIENTE"].sum()),
+        "taxa_acordo": scalar_safe_div(len(resultados_hist), eventos_base["IS_CPC"].sum()),
+        "taxa_pagamento": scalar_safe_div(resultados_hist["IS_PAGO"].sum(), len(resultados_hist)),
+        "percentual_medio_recuperado": scalar_safe_div(resultados_hist["VALOR_PAGO"].sum(), resultados_hist["VALOR_NEGOCIADO"].sum()),
+    }
+
+    df["taxa_contato_grupo"] = safe_div(df["contatos_cliente_hist"], df["acionamentos_hist"])
+    df["taxa_cpc_grupo"] = safe_div(df["cpcs_hist"], df["contatos_cliente_hist"])
+    df["taxa_acordo_grupo"] = safe_div(df["acordos_hist"], df["cpcs_hist"])
+    df["taxa_pagamento_grupo"] = safe_div(df["pagamentos_hist"], df["acordos_hist"])
+    df["percentual_medio_recuperado_grupo"] = safe_div(df["valor_pago_hist"], df["valor_negociado_hist"])
+
+    usar_media_contato = df["acionamentos_hist"] < 30
+    usar_media_cpc = df["contatos_cliente_hist"] < 10
+    usar_media_acordo = df["cpcs_hist"] < 10
+    usar_media_pagamento = df["acordos_hist"] < 5
+    usar_media_recuperado = df["valor_negociado_hist"] <= 0
+
+    df["taxa_contato"] = np.where(usar_media_contato, global_rates["taxa_contato"], df["taxa_contato_grupo"])
+    df["taxa_cpc"] = np.where(usar_media_cpc, global_rates["taxa_cpc"], df["taxa_cpc_grupo"])
+    df["taxa_acordo"] = np.where(usar_media_acordo, global_rates["taxa_acordo"], df["taxa_acordo_grupo"])
+    df["taxa_pagamento"] = np.where(usar_media_pagamento, global_rates["taxa_pagamento"], df["taxa_pagamento_grupo"])
+    df["percentual_medio_recuperado"] = np.where(
+        usar_media_recuperado,
+        global_rates["percentual_medio_recuperado"],
+        df["percentual_medio_recuperado_grupo"],
+    )
+    for col in ["taxa_contato", "taxa_cpc", "taxa_acordo", "taxa_pagamento", "percentual_medio_recuperado"]:
+        df[col] = pd.Series(df[col]).fillna(0).clip(lower=0, upper=1)
+
+    df["recuperacao_esperada"] = (
+        df["carteira_elegivel"]
+        * df["taxa_contato"]
+        * df["taxa_cpc"]
+        * df["taxa_acordo"]
+        * df["taxa_pagamento"]
+        * df["percentual_medio_recuperado"]
+    )
+    df["recuperacao_esperada_pct_carteira"] = safe_div(df["recuperacao_esperada"], df["carteira_elegivel"])
+    usa_alguma_media = usar_media_contato | usar_media_cpc | usar_media_acordo | usar_media_pagamento | usar_media_recuperado
+    usa_todas_medias = usar_media_contato & usar_media_cpc & usar_media_acordo & usar_media_pagamento & usar_media_recuperado
+    df["base_taxas"] = np.select(
+        [usa_todas_medias, usa_alguma_media],
+        ["Média geral", "Grupo + média geral"],
+        default="Grupo",
+    )
+    return df.sort_values("recuperacao_esperada", ascending=False)
+
+
 def metric_card(label, value, help_text=None):
     value_text = str(value)
     title = help_text or f"{label}: {value_text}"
@@ -1034,6 +1196,8 @@ def display_fields(df):
         "total_amount_due",
         "valor_negociado_hist",
         "valor_pago_hist",
+        "carteira_elegivel",
+        "recuperacao_esperada",
     ]
     pct_cols = [
         "tx_contato",
@@ -1053,6 +1217,12 @@ def display_fields(df):
         "atingimento_meta_individual",
         "participacao_meta_geral",
         "score_recuperacao",
+        "taxa_contato",
+        "taxa_cpc",
+        "taxa_acordo",
+        "taxa_pagamento",
+        "percentual_medio_recuperado",
+        "recuperacao_esperada_pct_carteira",
     ]
     num_cols = [
         "acionamentos",
@@ -1069,9 +1239,11 @@ def display_fields(df):
         "acordos_em_aberto",
         "acordos_nao_pagou",
         "clientes",
+        "contratos_elegiveis",
         "dpd",
         "dias_sem_contato",
         "acionamentos_hist",
+        "contatos_cliente_hist",
         "cpcs_hist",
         "acordos_hist",
         "pagamentos_hist",
@@ -1102,6 +1274,8 @@ def formatted_table(df):
         "total_amount_due",
         "valor_negociado_hist",
         "valor_pago_hist",
+        "carteira_elegivel",
+        "recuperacao_esperada",
     ]:
         if col in out:
             out[col] = out[col].map(money_fmt)
@@ -1123,6 +1297,12 @@ def formatted_table(df):
         "atingimento_meta_individual",
         "participacao_meta_geral",
         "score_recuperacao",
+        "taxa_contato",
+        "taxa_cpc",
+        "taxa_acordo",
+        "taxa_pagamento",
+        "percentual_medio_recuperado",
+        "recuperacao_esperada_pct_carteira",
     ]:
         if col in out:
             out[col] = out[col].map(pct_fmt)
@@ -1141,9 +1321,11 @@ def formatted_table(df):
         "acordos_em_aberto",
         "acordos_nao_pagou",
         "clientes",
+        "contratos_elegiveis",
         "dpd",
         "dias_sem_contato",
         "acionamentos_hist",
+        "contatos_cliente_hist",
         "cpcs_hist",
         "acordos_hist",
         "pagamentos_hist",
@@ -1171,6 +1353,15 @@ def data_table(df, **kwargs):
         hide_index=True,
         **kwargs,
     )
+
+
+def dataframe_to_excel_bytes(df, sheet_name="Workplan", extra_sheets=None):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        for extra_sheet_name, extra_df in (extra_sheets or {}).items():
+            extra_df.to_excel(writer, index=False, sheet_name=extra_sheet_name)
+    return output.getvalue()
 
 
 def glossary():
@@ -1733,12 +1924,19 @@ with tabs[8]:
     elif workplan_df.empty:
         st.info("Sem dados do Workplan para exibir.")
     else:
-        cobravel_df = workplan_df[workplan_df["flag_cobravel"].eq("SIM")].copy()
-        base_workplan = cobravel_df if not cobravel_df.empty else workplan_df
+        elegivel_df = workplan_df[
+            workplan_df["pagamentos_hist"].eq(0)
+            & workplan_df["acordos_em_aberto_hist"].eq(0)
+        ].copy()
+        cobravel_df = elegivel_df[elegivel_df["flag_cobravel"].eq("SIM")].copy()
+        base_workplan = cobravel_df if not cobravel_df.empty else elegivel_df
+
+        if base_workplan.empty:
+            st.info("Sem contratos sem pagamento histórico e sem acordo em aberto para recomendar.")
 
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
-            metric_card("Contratos cobráveis", num_fmt(len(base_workplan)))
+            metric_card("Contratos elegíveis", num_fmt(len(base_workplan)))
         with c2:
             metric_card("Valor em aberto", money_fmt(base_workplan["total_amount_due"].sum()))
         with c3:
@@ -1746,7 +1944,8 @@ with tabs[8]:
         with c4:
             metric_card("Com CPC histórico", num_fmt((base_workplan["cpcs_hist"] > 0).sum()))
         with c5:
-            metric_card("Nunca acionados", num_fmt(base_workplan["acionamentos_hist"].eq(0).sum()))
+            excluidos = workplan_df["pagamentos_hist"].gt(0) | workplan_df["acordos_em_aberto_hist"].gt(0)
+            metric_card("Pagos/em aberto excluídos", num_fmt(excluidos.sum()))
 
         prioridade_sel = st.multiselect("Prioridade Workplan", ["Alta", "Média", "Baixa"], default=["Alta", "Média"])
         segmento_sel = st.multiselect("Segmento Workplan", ["POTLOSS", "SALVAGE", "SALVAGE +"])
@@ -1789,14 +1988,151 @@ with tabs[8]:
                 sort=None,
             )
 
-        st.subheader("Contratos recomendados para cobrança")
+        st.subheader("Recuperação esperada ponderada")
+        st.caption("Carteira elegível x taxa de contato x taxa de CPC x taxa de acordo x taxa de pagamento x percentual médio recuperado.")
+        projection_dims = {
+            "Segmento DPD": ("SEGMENTO_DPD", "SEGMENTO_DPD", "SEGMENTO_DPD"),
+            "Faixa de atraso": ("FAIXA_ATRASO", "FAIXA_ATRASO", "FAIXA_ATRASO"),
+            "Região": ("REGIÃO", "REGIAO", "REGIÃO"),
+            "UF/Estado": ("uf", "UF", "UF"),
+            "Segmento + faixa": (
+                ["SEGMENTO_DPD", "FAIXA_ATRASO"],
+                ["SEGMENTO_DPD", "FAIXA_ATRASO"],
+                ["SEGMENTO_DPD", "FAIXA_ATRASO"],
+            ),
+            "Segmento + região": (
+                ["SEGMENTO_DPD", "REGIÃO"],
+                ["SEGMENTO_DPD", "REGIAO"],
+                ["SEGMENTO_DPD", "REGIÃO"],
+            ),
+            "Faixa + região": (
+                ["FAIXA_ATRASO", "REGIÃO"],
+                ["FAIXA_ATRASO", "REGIAO"],
+                ["FAIXA_ATRASO", "REGIÃO"],
+            ),
+            "Segmento + faixa + região": (
+                ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO"],
+                ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIAO"],
+                ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO"],
+            ),
+        }
+        if "PRODUTO" in workplan_view.columns:
+            projection_dims["Produto"] = ("PRODUTO", "PRODUTO", "PRODUTO")
+            projection_dims["Produto + segmento"] = (
+                ["PRODUTO", "SEGMENTO_DPD"],
+                ["PRODUTO", "SEGMENTO_DPD"],
+                ["PRODUTO", "SEGMENTO_DPD"],
+            )
+        projection_group = st.selectbox("Agrupamento da projeção", list(projection_dims.keys()))
+        projection_df = expected_recovery_by_group(
+            workplan_view,
+            eventos_raw,
+            resultados_raw,
+            *projection_dims[projection_group],
+        )
+        if projection_df.empty:
+            st.info("Sem base suficiente para calcular a recuperação esperada nos filtros atuais.")
+        else:
+            total_carteira_proj = projection_df["carteira_elegivel"].sum()
+            total_recuperacao_proj = projection_df["recuperacao_esperada"].sum()
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                metric_card("Carteira elegível projetada", money_fmt(total_carteira_proj))
+            with c2:
+                metric_card("Recuperação esperada", money_fmt(total_recuperacao_proj))
+            with c3:
+                metric_card("% esperado da carteira", pct_fmt(total_recuperacao_proj / total_carteira_proj if total_carteira_proj else 0))
+
+            projection_display = display_fields(projection_df)
+            bar_chart(
+                projection_display.head(12),
+                x="recuperacao_esperada:Q",
+                y="grupo:N",
+                tooltip=[
+                    "grupo",
+                    "contratos_elegiveis_br",
+                    "carteira_elegivel_br",
+                    "recuperacao_esperada_br",
+                    "recuperacao_esperada_pct_carteira_br",
+                    "taxa_contato_br",
+                    "taxa_cpc_br",
+                    "taxa_acordo_br",
+                    "taxa_pagamento_br",
+                    "percentual_medio_recuperado_br",
+                    "base_taxas",
+                ],
+                title=f"Recuperação esperada por {projection_group.lower()}",
+            )
+            projection_cols = [
+                "grupo",
+                "contratos_elegiveis",
+                "carteira_elegivel",
+                "recuperacao_esperada",
+                "recuperacao_esperada_pct_carteira",
+                "taxa_contato",
+                "taxa_cpc",
+                "taxa_acordo",
+                "taxa_pagamento",
+                "percentual_medio_recuperado",
+                "acionamentos_hist",
+                "contatos_cliente_hist",
+                "cpcs_hist",
+                "acordos_hist",
+                "pagamentos_hist",
+                "base_taxas",
+            ]
+            data_table(projection_df[projection_cols])
+            projection_workplan_cols = projection_dims[projection_group][0]
+            projection_clients = add_projection_group(workplan_view, projection_workplan_cols)
+            projection_client_cols = [
+                "grupo",
+                "agreement_no",
+                "cust_name",
+                "cpf_cnpj",
+                "PRODUTO",
+                "prioridade_workplan",
+                "score_recuperacao",
+                "SEGMENTO_DPD",
+                "FAIXA_ATRASO",
+                "REGIÃO",
+                "uf",
+                "dpd",
+                "total_amount_due",
+                "dias_sem_contato",
+                "acionamentos_hist",
+                "cpcs_hist",
+                "acordos_hist",
+                "pagamentos_hist",
+                "status_base",
+                "status_cpc",
+                "city",
+                "state",
+            ]
+            projection_client_cols = [col for col in projection_client_cols if col in projection_clients.columns]
+            st.download_button(
+                "Exportar projeção Excel",
+                data=dataframe_to_excel_bytes(
+                    projection_df[projection_cols],
+                    sheet_name="Resumo",
+                    extra_sheets={"Clientes": projection_clients[projection_client_cols]},
+                ),
+                file_name="recuperacao_esperada_workplan.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        st.subheader("Contratos recomendados para novos acordos")
         workplan_cols = [
             "agreement_no",
             "cust_name",
+            "cpf_cnpj",
+            "PRODUTO",
             "prioridade_workplan",
             "score_recuperacao",
             "motivo_priorizacao",
             "SEGMENTO_DPD",
+            "FAIXA_ATRASO",
+            "REGIÃO",
+            "uf",
             "dpd",
             "total_amount_due",
             "dias_sem_contato",
@@ -1809,7 +2145,25 @@ with tabs[8]:
             "city",
             "state",
         ]
-        data_table(workplan_view[workplan_cols].head(100))
+        workplan_cols = [col for col in workplan_cols if col in workplan_view.columns]
+        selected_workplan_cols = st.multiselect(
+            "Colunas para visualizar/exportar",
+            workplan_cols,
+            default=workplan_cols,
+            format_func=lambda col: FIELD_HELP.get(col, (col, ""))[0],
+        )
+        if not selected_workplan_cols:
+            st.info("Selecione pelo menos uma coluna para visualizar/exportar.")
+        else:
+            export_view = workplan_view[selected_workplan_cols].copy()
+            st.caption(f"A visualização mostra os 100 primeiros contratos. A exportação usa todos os {num_fmt(len(export_view))} contratos filtrados.")
+            data_table(export_view.head(100))
+            st.download_button(
+                "Exportar Excel",
+                data=dataframe_to_excel_bytes(export_view),
+                file_name="contratos_recomendados_workplan.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
 with tabs[9]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0

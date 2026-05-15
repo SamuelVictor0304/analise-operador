@@ -3,6 +3,8 @@ __pycache__/
 .streamlit/secrets.toml
 streamlit.out.log
 streamlit.err.log
+casos_workplan.csv
+supabase_create_workplan.sql
 ~$*
 .DS_Store
 Thumbs.db
