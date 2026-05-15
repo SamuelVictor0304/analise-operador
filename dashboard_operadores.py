@@ -1,5 +1,6 @@
 from pathlib import Path
 from html import escape
+import os
 import re
 
 import altair as alt
@@ -14,6 +15,15 @@ RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
+POSTGRES_DEFAULTS = {
+    "host": "localhost",
+    "port": 5432,
+    "database": "postgres",
+    "user": "postgres",
+    "password": "",
+    "schema": "workplan",
+    "table": "casos_workplan",
+}
 
 
 def latest_file(pattern):
@@ -86,7 +96,19 @@ MONTH_NAMES_PT = {
 FIELD_HELP = {
     "OPERADOR": ("Operador", "Negociador responsável pelo evento ou acordo."),
     "FAIXA_ATRASO": ("Faixa de atraso", "Agrupamento do atraso/DPD do contrato em faixas gerenciais."),
-    "SEGMENTO_DPD": ("Segmento DPD", "Classificação do contrato por DPD: POTLOSS 1-720, SALVAGE 721-1440 e SALVAGE + acima de 1440."),
+    "SEGMENTO_DPD": ("Segmento DPD", "Classificação do contrato pela coluna Y/DPD Formula: POTLOSS 1-720, SALVAGE 721-1440 e SALVAGE + acima de 1440."),
+    "prioridade_workplan": ("Prioridade", "Classificação do contrato no Workplan pelo score de recuperação."),
+    "score_recuperacao": ("Score recuperação", "Score de priorização futura combinando segmento, valor, histórico de CPC/acordo/pagamento e tempo sem contato."),
+    "motivo_priorizacao": ("Motivo priorização", "Principais fatores que aumentaram a prioridade do contrato."),
+    "total_amount_due": ("Valor em aberto", "Valor total em aberto do contrato no Workplan."),
+    "dpd": ("DPD", "Dias de atraso do contrato no Workplan."),
+    "dias_sem_contato": ("Dias sem contato", "Dias desde o último contato registrado no Workplan ou último acionamento no histórico."),
+    "acionamentos_hist": ("Acionamentos históricos", "Quantidade de acionamentos históricos localizados para o contrato."),
+    "cpcs_hist": ("CPCs históricos", "Quantidade de CPCs históricos localizados para o contrato."),
+    "acordos_hist": ("Acordos históricos", "Quantidade de acordos históricos localizados para o contrato."),
+    "pagamentos_hist": ("Pagamentos históricos", "Quantidade de pagamentos históricos localizados para o contrato."),
+    "flag_cobravel": ("Cobravel", "Indica se o contrato está marcado como cobrável no Workplan."),
+    "status_cpc": ("Status CPC", "Status de CPC disponível no Workplan."),
     "REGIÃO": ("Região", "Região cadastrada na base de resultados."),
     "clientes": ("Clientes", "Quantidade distinta de contratos/clientes no agrupamento."),
     "clientes_trabalhados": ("Clientes trabalhados", "Quantidade distinta de contratos acionados pelo operador."),
@@ -186,12 +208,23 @@ def atraso_faixa(days):
 def segmento_dpd(days):
     if pd.isna(days):
         return "Sem DPD"
-    days = float(days)
-    if days < 1:
+    text = normalize_text(days).upper()
+    if text:
+        compact = re.sub(r"[^A-Z0-9+]", "", text)
+        if compact == "POTLOSS":
+            return "POTLOSS"
+        if compact == "SALVAGE":
+            return "SALVAGE"
+        if compact in {"SALVAGE+", "SALVAGEPLUS"}:
+            return "SALVAGE +"
+    numeric_days = pd.to_numeric(days, errors="coerce")
+    if pd.isna(numeric_days):
         return "Sem DPD"
-    if days <= 720:
+    if numeric_days < 1:
+        return "Sem DPD"
+    if numeric_days <= 720:
         return "POTLOSS"
-    if days <= 1440:
+    if numeric_days <= 1440:
         return "SALVAGE"
     return "SALVAGE +"
 
@@ -213,6 +246,19 @@ def num_fmt(value):
 
 def safe_div(num, den):
     return np.where(den == 0, 0, num / den)
+
+
+def postgres_config():
+    secrets = st.secrets.get("postgres", {}) if hasattr(st, "secrets") else {}
+    return {
+        "host": os.getenv("PGHOST", secrets.get("host", POSTGRES_DEFAULTS["host"])),
+        "port": int(os.getenv("PGPORT", secrets.get("port", POSTGRES_DEFAULTS["port"]))),
+        "database": os.getenv("PGDATABASE", secrets.get("database", POSTGRES_DEFAULTS["database"])),
+        "user": os.getenv("PGUSER", secrets.get("user", POSTGRES_DEFAULTS["user"])),
+        "password": os.getenv("PGPASSWORD", secrets.get("password", POSTGRES_DEFAULTS["password"])),
+        "schema": os.getenv("PGSCHEMA", secrets.get("schema", POSTGRES_DEFAULTS["schema"])),
+        "table": os.getenv("PGTABLE", secrets.get("table", POSTGRES_DEFAULTS["table"])),
+    }
 
 
 def quartile_label(series, higher_is_better=True, min_series=None, min_value=1):
@@ -447,6 +493,151 @@ def meta_operator_groups(df):
 
 
 @st.cache_data(show_spinner=False)
+def load_workplan():
+    try:
+        import psycopg2
+    except ImportError:
+        return pd.DataFrame(), "Driver psycopg2-binary não instalado."
+
+    cfg = postgres_config()
+    query = f"""
+        SELECT
+            agreement_no,
+            cust_name,
+            dpd,
+            total_amount_due,
+            last_contact_date,
+            allocation_date,
+            last_marking_date,
+            city,
+            state,
+            last_marking_value,
+            pct_of_margin_money,
+            no_first_ins_unpaid,
+            status,
+            flag_cobravel,
+            status_base,
+            flag_cpc,
+            status_cpc,
+            probabilidade,
+            faixa_atraso,
+            regiao,
+            uf
+        FROM "{cfg['schema']}"."{cfg['table']}"
+    """
+    try:
+        conn = psycopg2.connect(
+            host=cfg["host"],
+            port=cfg["port"],
+            dbname=cfg["database"],
+            user=cfg["user"],
+            password=cfg["password"],
+        )
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+    except Exception as exc:
+        return pd.DataFrame(), f"Não foi possível carregar o Workplan: {exc}"
+
+    df.columns = [normalize_text(c).lower() for c in df.columns]
+    df["CONTRATO_KEY"] = df["agreement_no"].map(normalize_contract)
+    df["dpd"] = pd.to_numeric(df["dpd"], errors="coerce")
+    df["total_amount_due"] = pd.to_numeric(df["total_amount_due"], errors="coerce").fillna(0)
+    df["pct_of_margin_money"] = pd.to_numeric(df["pct_of_margin_money"], errors="coerce")
+    df["no_first_ins_unpaid"] = pd.to_numeric(df["no_first_ins_unpaid"], errors="coerce")
+    for col in ["last_contact_date", "allocation_date", "last_marking_date"]:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    df["SEGMENTO_DPD"] = df["dpd"].map(segmento_dpd)
+    df["flag_cobravel"] = df["flag_cobravel"].map(normalize_text).str.upper()
+    df["flag_cpc"] = df["flag_cpc"].map(normalize_text).str.upper()
+    df["status_cpc"] = df["status_cpc"].map(normalize_text)
+    df["status_base"] = df["status_base"].map(normalize_text)
+    return df[df["CONTRATO_KEY"].notna()].copy(), None
+
+
+def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
+    if workplan.empty:
+        return workplan
+
+    eventos_contrato = eventos_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+        acionamentos_hist=("EVENTO_TXT", "size"),
+        cpcs_hist=("IS_CPC", "sum"),
+        ultimo_acionamento=("DATA", "max"),
+    ).reset_index()
+    resultados_contrato = resultados_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+        acordos_hist=("CONTRATO_KEY", "count"),
+        pagamentos_hist=("IS_PAGO", "sum"),
+        acordos_em_aberto_hist=("IS_EM_ABERTO", "sum"),
+        acordos_nao_pagou_hist=("IS_NAO_PAGOU", "sum"),
+        valor_negociado_hist=("VALOR_NEGOCIADO", "sum"),
+        valor_pago_hist=("VALOR_PAGO", "sum"),
+    ).reset_index()
+
+    df = workplan.merge(eventos_contrato, on="CONTRATO_KEY", how="left")
+    df = df.merge(resultados_contrato, on="CONTRATO_KEY", how="left")
+    fill_zero = [
+        "acionamentos_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
+        "acordos_em_aberto_hist",
+        "acordos_nao_pagou_hist",
+        "valor_negociado_hist",
+        "valor_pago_hist",
+    ]
+    for col in fill_zero:
+        df[col] = df[col].fillna(0)
+
+    ultimo_contato = df[["last_contact_date", "ultimo_acionamento"]].max(axis=1)
+    hoje = pd.Timestamp.today().normalize()
+    df["dias_sem_contato"] = (hoje - ultimo_contato).dt.days
+    df["dias_sem_contato"] = df["dias_sem_contato"].fillna(999).clip(lower=0)
+
+    segmento_score = df["SEGMENTO_DPD"].map({"POTLOSS": 0.25, "SALVAGE": 0.16, "SALVAGE +": 0.08}).fillna(0)
+    valor_score = pd.to_numeric(df["total_amount_due"], errors="coerce").rank(pct=True).fillna(0) * 0.22
+    cpc_score = np.where((df["cpcs_hist"] > 0) | df["flag_cpc"].eq("SIM"), 0.16, 0)
+    acordo_score = np.where(df["acordos_hist"] > 0, 0.10, 0)
+    pagamento_score = np.where(df["pagamentos_hist"] > 0, 0.08, 0)
+    contato_score = np.select(
+        [
+            df["dias_sem_contato"] >= 30,
+            df["dias_sem_contato"] >= 15,
+            df["dias_sem_contato"] >= 7,
+        ],
+        [0.14, 0.10, 0.06],
+        default=0.02,
+    )
+    cobravel_score = np.where(df["flag_cobravel"].eq("SIM"), 0.05, -0.20)
+    df["score_recuperacao"] = (segmento_score + valor_score + cpc_score + acordo_score + pagamento_score + contato_score + cobravel_score).clip(0, 1)
+    df["prioridade_workplan"] = np.select(
+        [
+            df["score_recuperacao"] >= 0.70,
+            df["score_recuperacao"] >= 0.45,
+        ],
+        ["Alta", "Média"],
+        default="Baixa",
+    )
+
+    motivos = []
+    for _, row in df.iterrows():
+        parts = []
+        if row["SEGMENTO_DPD"] in {"POTLOSS", "SALVAGE"}:
+            parts.append(row["SEGMENTO_DPD"])
+        if row["total_amount_due"] >= df["total_amount_due"].quantile(0.75):
+            parts.append("alto valor")
+        if row["cpcs_hist"] > 0 or row["flag_cpc"] == "SIM":
+            parts.append("histórico de CPC")
+        if row["acordos_hist"] > 0:
+            parts.append("já teve acordo")
+        if row["pagamentos_hist"] > 0:
+            parts.append("já teve pagamento")
+        if row["dias_sem_contato"] >= 15:
+            parts.append("sem contato recente")
+        motivos.append(", ".join(parts) if parts else "baixo sinal histórico")
+    df["motivo_priorizacao"] = motivos
+    return df.sort_values(["score_recuperacao", "total_amount_due"], ascending=False)
+
+
+@st.cache_data(show_spinner=False)
 def load_data():
     eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos")
     clientes_file = latest_file("Pesquisa-Cliente-908-*.xlsx")
@@ -508,7 +699,7 @@ def load_data():
     resultados["HONORARIOS"] = pd.to_numeric(resultados["HONORÁRIOS %"], errors="coerce").fillna(0)
     resultados["DPD"] = pd.to_numeric(resultados["DPD"], errors="coerce")
     resultados["FAIXA_ATRASO"] = resultados["DPD"].map(atraso_faixa)
-    resultados["SEGMENTO_DPD"] = resultados["DPD"].map(segmento_dpd)
+    resultados["SEGMENTO_DPD"] = resultados["DPD FORMULA"].map(segmento_dpd)
     resultados["REGIÃO"] = resultados["REGIÃO"].fillna(resultados.get("UF", "Sem região")).map(normalize_text)
     resultados["UF"] = resultados["UF"].map(normalize_text)
     resultados["CAMPANHA"] = resultados["CAMPANHA"].map(normalize_text)
@@ -535,7 +726,7 @@ def apply_filters(eventos, resultados):
     operadores = sorted(set(eventos["OPERADOR"].dropna()) | set(resultados["OPERADOR"].dropna()))
     regioes = sorted(resultados["REGIÃO"].replace("", np.nan).dropna().unique())
     faixas = ["000-030", "031-060", "061-090", "091-120", "121-180", "181-360", "361+", "Sem atraso"]
-    segmentos_dpd = ["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"]
+    segmentos_dpd = ["POTLOSS", "SALVAGE", "SALVAGE +"]
     campanhas = sorted(resultados["CAMPANHA"].replace("", np.nan).dropna().unique())
     produtos = sorted(eventos.get("PRODUTO", pd.Series(dtype=str)).replace("", np.nan).dropna().unique())
     meses_df = (
@@ -799,6 +990,9 @@ def display_fields(df):
         "meta_individual",
         "saldo_meta_individual",
         "meta_geral_escritorio",
+        "total_amount_due",
+        "valor_negociado_hist",
+        "valor_pago_hist",
     ]
     pct_cols = [
         "tx_contato",
@@ -817,6 +1011,7 @@ def display_fields(df):
         "score",
         "atingimento_meta_individual",
         "participacao_meta_geral",
+        "score_recuperacao",
     ]
     num_cols = [
         "acionamentos",
@@ -833,6 +1028,12 @@ def display_fields(df):
         "acordos_em_aberto",
         "acordos_nao_pagou",
         "clientes",
+        "dpd",
+        "dias_sem_contato",
+        "acionamentos_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
     ]
     for col in money_cols:
         if col in out:
@@ -857,6 +1058,9 @@ def formatted_table(df):
         "meta_individual",
         "saldo_meta_individual",
         "meta_geral_escritorio",
+        "total_amount_due",
+        "valor_negociado_hist",
+        "valor_pago_hist",
     ]:
         if col in out:
             out[col] = out[col].map(money_fmt)
@@ -877,6 +1081,7 @@ def formatted_table(df):
         "score",
         "atingimento_meta_individual",
         "participacao_meta_geral",
+        "score_recuperacao",
     ]:
         if col in out:
             out[col] = out[col].map(pct_fmt)
@@ -895,6 +1100,12 @@ def formatted_table(df):
         "acordos_em_aberto",
         "acordos_nao_pagou",
         "clientes",
+        "dpd",
+        "dias_sem_contato",
+        "acionamentos_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
     ]:
         if col in out:
             out[col] = out[col].map(num_fmt)
@@ -939,9 +1150,11 @@ def glossary():
 
 
 eventos_raw, contratos_raw, resultados_raw = load_data()
+workplan_raw, workplan_error = load_workplan()
 eventos, resultados, operadores_filtrados = apply_filters(eventos_raw, resultados_raw)
 operador_df = aggregate_operator(eventos, resultados)
 cpc_df = aggregate_cpc_operator(eventos, resultados)
+workplan_df = build_workplan_analysis(workplan_raw, eventos_raw[eventos_raw["IS_ACIONAMENTO"]], resultados_raw)
 
 st.title("Performance Operacional por Operador")
 st.caption("Análise executiva de acionamentos, contatos, acordos, pagamentos, recuperação e eficiência por segmento.")
@@ -982,7 +1195,7 @@ with kpi_row2[3]:
 with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Insights"])
+tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Insights"])
 
 with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
@@ -1264,14 +1477,16 @@ with tabs[3]:
     data_table(best_faixa)
 
 with tabs[4]:
-    segmento_df = aggregate_resultados(resultados, "SEGMENTO_DPD")
-    ev_segmento = eventos.groupby("SEGMENTO_DPD").agg(
+    resultados_segmento = resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")].copy()
+    eventos_segmento = eventos[eventos["SEGMENTO_DPD"].ne("Sem DPD")].copy()
+    segmento_df = aggregate_resultados(resultados_segmento, "SEGMENTO_DPD")
+    ev_segmento = eventos_segmento.groupby("SEGMENTO_DPD").agg(
         acionamentos=("EVENTO_TXT", "size"),
         contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
     ).reset_index()
     segmento_df = segmento_df.merge(ev_segmento, on="SEGMENTO_DPD", how="outer").fillna(0)
     segmento_df["tx_contato"] = safe_div(segmento_df["contatos_efetivos"], segmento_df["acionamentos"])
-    segmento_order = ["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"]
+    segmento_order = ["POTLOSS", "SALVAGE", "SALVAGE +"]
     segmento_df["SEGMENTO_DPD"] = pd.Categorical(segmento_df["SEGMENTO_DPD"], categories=segmento_order, ordered=True)
     segmento_df = segmento_df.sort_values("SEGMENTO_DPD")
     segmento_chart = display_fields(segmento_df)
@@ -1297,7 +1512,7 @@ with tabs[4]:
         )
 
     best_segmento = (
-        resultados.groupby(["SEGMENTO_DPD", "OPERADOR"])
+        resultados_segmento.groupby(["SEGMENTO_DPD", "OPERADOR"])
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -1471,12 +1686,97 @@ with tabs[7]:
     data_table(metas_df[meta_cols])
 
 with tabs[8]:
+    st.subheader("Workplan e priorização futura")
+    if workplan_error:
+        st.warning(workplan_error)
+    elif workplan_df.empty:
+        st.info("Sem dados do Workplan para exibir.")
+    else:
+        cobravel_df = workplan_df[workplan_df["flag_cobravel"].eq("SIM")].copy()
+        base_workplan = cobravel_df if not cobravel_df.empty else workplan_df
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            metric_card("Contratos cobráveis", num_fmt(len(base_workplan)))
+        with c2:
+            metric_card("Valor em aberto", money_fmt(base_workplan["total_amount_due"].sum()))
+        with c3:
+            metric_card("Prioridade alta", num_fmt(base_workplan["prioridade_workplan"].eq("Alta").sum()))
+        with c4:
+            metric_card("Com CPC histórico", num_fmt((base_workplan["cpcs_hist"] > 0).sum()))
+        with c5:
+            metric_card("Nunca acionados", num_fmt(base_workplan["acionamentos_hist"].eq(0).sum()))
+
+        prioridade_sel = st.multiselect("Prioridade Workplan", ["Alta", "Média", "Baixa"], default=["Alta", "Média"])
+        segmento_sel = st.multiselect("Segmento Workplan", ["POTLOSS", "SALVAGE", "SALVAGE +"])
+        workplan_view = base_workplan.copy()
+        if prioridade_sel:
+            workplan_view = workplan_view[workplan_view["prioridade_workplan"].isin(prioridade_sel)]
+        if segmento_sel:
+            workplan_view = workplan_view[workplan_view["SEGMENTO_DPD"].isin(segmento_sel)]
+
+        c1, c2 = st.columns(2)
+        with c1:
+            prioridade_df = (
+                workplan_view.groupby("prioridade_workplan")
+                .agg(contratos=("CONTRATO_KEY", "nunique"), total_amount_due=("total_amount_due", "sum"), score_recuperacao=("score_recuperacao", "mean"))
+                .reset_index()
+            )
+            prioridade_df = display_fields(prioridade_df.rename(columns={"contratos": "clientes"}))
+            bar_chart(
+                prioridade_df,
+                x="total_amount_due:Q",
+                y=alt.Y("prioridade_workplan:N", sort=["Alta", "Média", "Baixa"], title=None),
+                color="prioridade_workplan:N",
+                tooltip=["prioridade_workplan", "clientes_br", "total_amount_due_br", "score_recuperacao_br"],
+                title="Valor em aberto por prioridade",
+                sort=None,
+            )
+        with c2:
+            segmento_workplan = (
+                workplan_view.groupby("SEGMENTO_DPD")
+                .agg(clientes=("CONTRATO_KEY", "nunique"), total_amount_due=("total_amount_due", "sum"), score_recuperacao=("score_recuperacao", "mean"))
+                .reset_index()
+            )
+            segmento_workplan = display_fields(segmento_workplan)
+            bar_chart(
+                segmento_workplan,
+                x="total_amount_due:Q",
+                y=alt.Y("SEGMENTO_DPD:N", sort=["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"], title=None),
+                tooltip=["SEGMENTO_DPD", "clientes_br", "total_amount_due_br", "score_recuperacao_br"],
+                title="Valor em aberto por segmento",
+                sort=None,
+            )
+
+        st.subheader("Contratos recomendados para cobrança")
+        workplan_cols = [
+            "agreement_no",
+            "cust_name",
+            "prioridade_workplan",
+            "score_recuperacao",
+            "motivo_priorizacao",
+            "SEGMENTO_DPD",
+            "dpd",
+            "total_amount_due",
+            "dias_sem_contato",
+            "acionamentos_hist",
+            "cpcs_hist",
+            "acordos_hist",
+            "pagamentos_hist",
+            "status_base",
+            "status_cpc",
+            "city",
+            "state",
+        ]
+        data_table(workplan_view[workplan_cols].head(100))
+
+with tabs[9]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
     oportunidades = operador_df[(operador_df["acionamentos"] >= operador_df["acionamentos"].median()) & (operador_df["score"] < avg_score)].sort_values("acionamentos", ascending=False)
     destaques = operador_df[operador_df["score"] >= operador_df["score"].quantile(0.75)].sort_values("score", ascending=False)
     faixas_oportunidade = aggregate_resultados(resultados, "FAIXA_ATRASO")
     faixas_oportunidade = faixas_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
-    segmentos_oportunidade = aggregate_resultados(resultados, "SEGMENTO_DPD")
+    segmentos_oportunidade = aggregate_resultados(resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")], "SEGMENTO_DPD")
     segmentos_oportunidade = segmentos_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
 
     c1, c2 = st.columns(2)
