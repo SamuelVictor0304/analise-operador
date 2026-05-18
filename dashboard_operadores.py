@@ -3,6 +3,7 @@ from html import escape
 from io import BytesIO
 import os
 import re
+import unicodedata
 
 import altair as alt
 import numpy as np
@@ -151,7 +152,7 @@ FIELD_HELP = {
     "tx_acordo_sem_pagamento": ("Taxa acordo sem pagamento", "Acordos sem pagamento divididos pelos acordos originados em contratos com CPC."),
     "valor_negociado": ("Valor negociado", "Soma da coluna VALOR DO BANCO - META da base de resultados."),
     "valor_pago": ("Valor recebido", "Valor negociado dos acordos pagos; acordos não pagos entram como R$ 0,00."),
-    "valor_em_aberto": ("Valor em aberto", "Valor negociado dos acordos com status EM ABERTO."),
+    "valor_em_aberto": ("Valor em aberto", "Valor negociado dos acordos com status EM ABERTO ou status vazio sem data de pagamento."),
     "valor_nao_pagou": ("Valor não pago", "Valor negociado dos acordos com status NÃO PAGOU."),
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
@@ -176,6 +177,12 @@ def normalize_text(value):
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def normalize_status(value):
+    text = normalize_text(value).upper()
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
 def normalize_contract(value):
@@ -782,10 +789,13 @@ def load_data():
     resultados["CAMPANHA"] = resultados["CAMPANHA"].map(normalize_text)
     resultados["TIPO DE ACORDO"] = resultados["TIPO DE ACORDO"].map(normalize_text)
     resultados["STATUS"] = resultados["STATUS"].map(normalize_text).str.upper()
+    resultados["STATUS_KEY"] = resultados["STATUS"].map(normalize_status)
     resultados["IS_ACORDO"] = resultados["CONTRATO_KEY"].notna() & resultados["OPERADOR"].notna()
-    resultados["IS_EM_ABERTO"] = resultados["STATUS"].eq("EM ABERTO")
-    resultados["IS_NAO_PAGOU"] = resultados["STATUS"].eq("NÃO PAGOU")
-    resultados["IS_PAGO"] = resultados["STATUS"].eq("PAGOU") | (resultados["DATA_PAGAMENTO"].notna())
+    resultados["IS_EM_ABERTO"] = resultados["STATUS_KEY"].eq("EM ABERTO") | (
+        resultados["STATUS_KEY"].eq("") & resultados["DATA_PAGAMENTO"].isna()
+    )
+    resultados["IS_NAO_PAGOU"] = resultados["STATUS_KEY"].eq("NAO PAGOU")
+    resultados["IS_PAGO"] = resultados["STATUS_KEY"].eq("PAGOU") | (resultados["DATA_PAGAMENTO"].notna())
     resultados["VALOR_PAGO"] = np.where(resultados["IS_PAGO"], resultados["VALOR_NEGOCIADO"], 0)
     resultados["VALOR_EM_ABERTO"] = np.where(resultados["IS_EM_ABERTO"], resultados["VALOR_NEGOCIADO"], 0)
     resultados["VALOR_NAO_PAGOU"] = np.where(resultados["IS_NAO_PAGOU"], resultados["VALOR_NEGOCIADO"], 0)
