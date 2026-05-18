@@ -35,6 +35,20 @@ def latest_file(pattern):
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
+def file_version(path):
+    path = Path(path)
+    stat = path.stat()
+    return (path.name, stat.st_size, stat.st_mtime_ns)
+
+
+def data_file_versions():
+    return (
+        file_version(latest_file("Cobmais-Eventos-908-*.xlsx")),
+        file_version(latest_file("Pesquisa-Cliente-908-*.xlsx")),
+        file_version(RESULTADOS_FILE),
+    )
+
+
 st.set_page_config(
     page_title="Performance Operacional",
     layout="wide",
@@ -136,7 +150,7 @@ FIELD_HELP = {
     "acordos": ("Acordos", "Quantidade de acordos localizados na base de resultados."),
     "pagamentos": ("Pagamentos", "Acordos com status PAGOU ou data de pagamento preenchida."),
     "acordos_sem_pagamento": ("Acordos sem pagamento", "Acordos sem status pago e sem data de pagamento."),
-    "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO na base de resultados."),
+    "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO ou status vazio sem data de pagamento."),
     "acordos_nao_pagou": ("Acordos não pagos", "Acordos com status NÃO PAGOU na base de resultados."),
     "tx_contato": ("Taxa de CPC", "CPCs divididos pelo total de acionamentos."),
     "tx_acordo": ("Taxa CPC -> acordo", "Acordos divididos pelo total de CPCs do operador."),
@@ -722,7 +736,7 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
 
 
 @st.cache_data(show_spinner=False)
-def load_data():
+def load_data(data_version):
     eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos")
     clientes_file = latest_file("Pesquisa-Cliente-908-*.xlsx")
     contratos = pd.read_excel(clientes_file, sheet_name="Contratos")
@@ -1410,7 +1424,7 @@ def glossary():
             st.markdown(f"**{name}:** {desc}")
 
 
-eventos_raw, contratos_raw, resultados_raw = load_data()
+eventos_raw, contratos_raw, resultados_raw = load_data(data_file_versions())
 workplan_raw, workplan_error = load_workplan()
 eventos, resultados, operadores_filtrados = apply_filters(eventos_raw, resultados_raw)
 operador_df = aggregate_operator(eventos, resultados)
