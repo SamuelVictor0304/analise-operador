@@ -158,6 +158,7 @@ FIELD_HELP = {
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
     "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil, ou R$ 300 mil para Ana Karolina e Luiz Mauro."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
+    "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
     "meta_geral_escritorio": ("Meta geral escritório", "Meta geral do escritório para o mês, lida na aba METAS."),
     "participacao_meta_geral": ("% meta geral", "Quanto o operador contribuiu para a meta geral do escritório."),
@@ -509,6 +510,7 @@ def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     df["meta_individual"] = np.where(df["OPERADOR"].isin(pos_retomado), 300000, 150000) * meses_count
     df["meta_geral_escritorio"] = meta_geral
     df["atingimento_meta_individual"] = safe_div(df["valor_pago"], df["meta_individual"])
+    df["pct_aberto_meta_individual"] = safe_div(df["valor_em_aberto"], df["meta_individual"])
     df["saldo_meta_individual"] = df["valor_pago"] - df["meta_individual"]
     df["participacao_meta_geral"] = safe_div(df["valor_pago"], df["meta_geral_escritorio"])
     df["quartil_meta_individual"] = quartile_label(df["atingimento_meta_individual"], min_series=df["meta_individual"], min_value=1)
@@ -1230,6 +1232,7 @@ def display_fields(df):
         "recuperacao",
         "score",
         "atingimento_meta_individual",
+        "pct_aberto_meta_individual",
         "participacao_meta_geral",
         "score_recuperacao",
         "taxa_contato",
@@ -1310,6 +1313,7 @@ def formatted_table(df):
         "recuperacao",
         "score",
         "atingimento_meta_individual",
+        "pct_aberto_meta_individual",
         "participacao_meta_geral",
         "score_recuperacao",
         "taxa_contato",
@@ -1859,9 +1863,10 @@ with tabs[7]:
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebidos_escritorio = load_office_received()
     recebido_meta_geral = sum(recebidos_escritorio.get(mes, 0) for mes in meses_meta)
+    valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         metric_card("Mês analisado", meses_texto)
     with c2:
@@ -1870,6 +1875,10 @@ with tabs[7]:
         metric_card("Recebido", money_fmt(recebido_meta_geral))
     with c4:
         metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
+    with c5:
+        metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
+    with c6:
+        metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
@@ -1887,8 +1896,10 @@ with tabs[7]:
             tooltip=[
                 "OPERADOR",
                 "valor_pago_br",
+                "valor_em_aberto_br",
                 "meta_individual_br",
                 "atingimento_meta_individual_br",
+                "pct_aberto_meta_individual_br",
                 "saldo_meta_individual_br",
                 "participacao_meta_geral_br",
                 "diagnostico_meta",
@@ -1919,8 +1930,10 @@ with tabs[7]:
         "cargo_colaborador",
         "negociador_cadastrado",
         "valor_pago",
+        "valor_em_aberto",
         "meta_individual",
         "atingimento_meta_individual",
+        "pct_aberto_meta_individual",
         "saldo_meta_individual",
         "meta_geral_escritorio",
         "participacao_meta_geral",
