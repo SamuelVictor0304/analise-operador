@@ -1172,8 +1172,7 @@ def gauge_point(cx, cy, radius, ratio):
 def gauge_path(cx, cy, radius, start_ratio, end_ratio):
     start_x, start_y = gauge_point(cx, cy, radius, start_ratio)
     end_x, end_y = gauge_point(cx, cy, radius, end_ratio)
-    large_arc = 1 if abs(end_ratio - start_ratio) > 0.5 else 0
-    return f"M {start_x:.2f} {start_y:.2f} A {radius} {radius} 0 {large_arc} 1 {end_x:.2f} {end_y:.2f}"
+    return f"M {start_x:.2f} {start_y:.2f} A {radius} {radius} 0 0 1 {end_x:.2f} {end_y:.2f}"
 
 
 def meta_gauge(value, target, title="Indicador de meta geral"):
@@ -1189,25 +1188,25 @@ def meta_gauge(value, target, title="Indicador de meta geral"):
     pct_target = value / target if target else 0
     color = "#bf616a" if pct_target < 0.75 else "#b7791f" if pct_target < 1 else "#2f6f73"
 
-    cx, cy, radius = 300, 250, 220
+    cx, cy, radius = 320, 230, 185
     bg_path = gauge_path(cx, cy, radius, 0, 1)
     value_path = gauge_path(cx, cy, radius, 0, progress)
-    target_inner = gauge_point(cx, cy, radius - 34, target_ratio)
-    target_outer = gauge_point(cx, cy, radius + 8, target_ratio)
+    target_inner = gauge_point(cx, cy, radius - 26, target_ratio)
+    target_outer = gauge_point(cx, cy, radius + 6, target_ratio)
 
     st.markdown(
         f"""
-        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:12px 16px;background:rgba(15,23,42,.12);">
+        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:12px 16px;background:rgba(15,23,42,.12);max-width:760px;margin:12px auto 16px;">
             <div style="color:rgba(255,255,255,.84);font-size:.9rem;font-weight:700;margin-bottom:4px;">{escape(title)}</div>
-            <svg viewBox="0 0 600 315" width="100%" role="img" aria-label="{escape(title)}">
-                <path d="{bg_path}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="84" stroke-linecap="butt"/>
-                <path d="{value_path}" fill="none" stroke="{color}" stroke-width="84" stroke-linecap="butt"/>
+            <svg viewBox="0 0 640 290" width="100%" height="260" style="display:block;max-height:260px;" role="img" aria-label="{escape(title)}">
+                <path d="{bg_path}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="58" stroke-linecap="butt"/>
+                <path d="{value_path}" fill="none" stroke="{color}" stroke-width="58" stroke-linecap="butt"/>
                 <line x1="{target_inner[0]:.2f}" y1="{target_inner[1]:.2f}" x2="{target_outer[0]:.2f}" y2="{target_outer[1]:.2f}" stroke="#2f6f73" stroke-width="3"/>
-                <text x="300" y="220" text-anchor="middle" fill="#ffffff" font-size="42" font-weight="500">{escape(money_fmt(value))}</text>
-                <text x="300" y="258" text-anchor="middle" fill="rgba(255,255,255,.72)" font-size="18">{escape(pct_fmt(pct_target))} da meta</text>
-                <text x="58" y="292" fill="rgba(255,255,255,.70)" font-size="17">{escape(money_fmt(0))}</text>
-                <text x="462" y="178" fill="rgba(255,255,255,.78)" font-size="17">Meta {escape(money_fmt(target))}</text>
-                <text x="458" y="292" fill="rgba(255,255,255,.70)" font-size="17">{escape(money_fmt(max_value))}</text>
+                <text x="320" y="212" text-anchor="middle" fill="#ffffff" font-size="34" font-weight="500">{escape(money_fmt(value))}</text>
+                <text x="320" y="244" text-anchor="middle" fill="rgba(255,255,255,.72)" font-size="16">{escape(pct_fmt(pct_target))} da meta</text>
+                <text x="110" y="274" fill="rgba(255,255,255,.70)" font-size="15">{escape(money_fmt(0))}</text>
+                <text x="472" y="160" fill="rgba(255,255,255,.78)" font-size="15">Meta {escape(money_fmt(target))}</text>
+                <text x="456" y="274" fill="rgba(255,255,255,.70)" font-size="15">{escape(money_fmt(max_value))}</text>
             </svg>
         </div>
         """,
