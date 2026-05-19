@@ -1,6 +1,7 @@
 from pathlib import Path
 from html import escape
 from io import BytesIO
+import math
 import os
 import re
 import unicodedata
@@ -1163,6 +1164,57 @@ def metric_card(label, value, help_text=None):
     )
 
 
+def gauge_point(cx, cy, radius, ratio):
+    angle = math.pi * (1 - ratio)
+    return cx + radius * math.cos(angle), cy - radius * math.sin(angle)
+
+
+def gauge_path(cx, cy, radius, start_ratio, end_ratio):
+    start_x, start_y = gauge_point(cx, cy, radius, start_ratio)
+    end_x, end_y = gauge_point(cx, cy, radius, end_ratio)
+    large_arc = 1 if abs(end_ratio - start_ratio) > 0.5 else 0
+    return f"M {start_x:.2f} {start_y:.2f} A {radius} {radius} 0 {large_arc} 1 {end_x:.2f} {end_y:.2f}"
+
+
+def meta_gauge(value, target, title="Indicador de meta geral"):
+    value = 0 if pd.isna(value) else float(value)
+    target = 0 if pd.isna(target) else float(target)
+    if target <= 0:
+        st.info("Sem meta geral cadastrada para montar o indicador.")
+        return
+
+    max_value = max(target * 1.2, value * 1.05, 1)
+    progress = min(max(value / max_value, 0), 1)
+    target_ratio = min(max(target / max_value, 0), 1)
+    pct_target = value / target if target else 0
+    color = "#bf616a" if pct_target < 0.75 else "#b7791f" if pct_target < 1 else "#2f6f73"
+
+    cx, cy, radius = 300, 250, 220
+    bg_path = gauge_path(cx, cy, radius, 0, 1)
+    value_path = gauge_path(cx, cy, radius, 0, progress)
+    target_inner = gauge_point(cx, cy, radius - 34, target_ratio)
+    target_outer = gauge_point(cx, cy, radius + 8, target_ratio)
+
+    st.markdown(
+        f"""
+        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:12px 16px;background:rgba(15,23,42,.12);">
+            <div style="color:rgba(255,255,255,.84);font-size:.9rem;font-weight:700;margin-bottom:4px;">{escape(title)}</div>
+            <svg viewBox="0 0 600 315" width="100%" role="img" aria-label="{escape(title)}">
+                <path d="{bg_path}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="84" stroke-linecap="butt"/>
+                <path d="{value_path}" fill="none" stroke="{color}" stroke-width="84" stroke-linecap="butt"/>
+                <line x1="{target_inner[0]:.2f}" y1="{target_inner[1]:.2f}" x2="{target_outer[0]:.2f}" y2="{target_outer[1]:.2f}" stroke="#2f6f73" stroke-width="3"/>
+                <text x="300" y="220" text-anchor="middle" fill="#ffffff" font-size="42" font-weight="500">{escape(money_fmt(value))}</text>
+                <text x="300" y="258" text-anchor="middle" fill="rgba(255,255,255,.72)" font-size="18">{escape(pct_fmt(pct_target))} da meta</text>
+                <text x="58" y="292" fill="rgba(255,255,255,.70)" font-size="17">{escape(money_fmt(0))}</text>
+                <text x="462" y="178" fill="rgba(255,255,255,.78)" font-size="17">Meta {escape(money_fmt(target))}</text>
+                <text x="458" y="292" fill="rgba(255,255,255,.70)" font-size="17">{escape(money_fmt(max_value))}</text>
+            </svg>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def bar_chart(df, x, y, color=None, tooltip=None, title=None, sort="-x", height=320):
     if df.empty:
         st.info("Sem dados para os filtros selecionados.")
@@ -1902,6 +1954,8 @@ with tabs[7]:
         metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
     with c6:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
+
+    meta_gauge(recebido_meta_geral, meta_geral)
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
