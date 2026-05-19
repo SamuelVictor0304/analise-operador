@@ -3,6 +3,7 @@ __pycache__/
 .streamlit/secrets.toml
 streamlit.out.log
 streamlit.err.log
+logs/
 casos_workplan.csv
 supabase_create_workplan.sql
 ~$*

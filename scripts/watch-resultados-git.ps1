@@ -3,7 +3,8 @@ param(
     [string]$FileName = "NOVA BASE RESULTADOS 2026.xlsm",
     [string]$Remote = "origin",
     [string]$Branch = "main",
-    [int]$DebounceSeconds = 20
+    [int]$DebounceSeconds = 20,
+    [string]$LogFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,7 +12,11 @@ $ErrorActionPreference = "Stop"
 function Write-Log {
     param([string]$Message)
     $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Write-Host "[$stamp] $Message"
+    $line = "[$stamp] $Message"
+    Write-Host $line
+    if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
+        Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
+    }
 }
 
 function Wait-FileStable {
@@ -103,11 +108,26 @@ function Commit-Resultados {
 }
 
 Set-Location -LiteralPath $RepoPath
+$defaultLogDir = Join-Path $RepoPath "logs"
+if ([string]::IsNullOrWhiteSpace($LogFile)) {
+    if (-not (Test-Path -LiteralPath $defaultLogDir)) {
+        New-Item -ItemType Directory -Path $defaultLogDir | Out-Null
+    }
+    $LogFile = Join-Path $defaultLogDir "resultados-autocommit.log"
+}
+
 $watchPath = Join-Path $RepoPath $FileName
 $watchDir = Split-Path -Parent $watchPath
 $watchFile = Split-Path -Leaf $watchPath
 
 Write-Log "Monitorando '$watchPath'. Pressione Ctrl+C para parar."
+
+try {
+    Commit-Resultados
+}
+catch {
+    Write-Log "Erro na verificacao inicial: $($_.Exception.Message)"
+}
 
 $watcher = New-Object System.IO.FileSystemWatcher
 $watcher.Path = $watchDir
