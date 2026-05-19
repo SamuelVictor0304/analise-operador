@@ -1885,8 +1885,7 @@ with tabs[7]:
     st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
-    recebidos_escritorio = load_office_received()
-    recebido_meta_geral = sum(recebidos_escritorio.get(mes, 0) for mes in meses_meta)
+    recebido_meta_geral = resultados["VALOR_PAGO"].sum()
     valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
