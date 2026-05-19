@@ -794,6 +794,7 @@ def load_data(data_version):
     resultados = resultados[~resultados["OPERADOR"].map(is_excluded_operator)].copy()
     resultados["DATA_ACORDO"] = pd.to_datetime(resultados["EMISSÃO"], errors="coerce")
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
+    resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
     resultados["HONORARIOS"] = pd.to_numeric(resultados["HONORÁRIOS %"], errors="coerce").fillna(0)
     resultados["DPD"] = pd.to_numeric(resultados["DPD"], errors="coerce")
@@ -1175,39 +1176,57 @@ def gauge_path(cx, cy, radius, start_ratio, end_ratio):
     return f"M {start_x:.2f} {start_y:.2f} A {radius} {radius} 0 0 1 {end_x:.2f} {end_y:.2f}"
 
 
-def meta_gauge(value, target, title="Indicador de meta geral"):
+def meta_gauge(value, target, month_label, open_today_count, open_today_value, title="Recebimento Total"):
     value = 0 if pd.isna(value) else float(value)
     target = 0 if pd.isna(target) else float(target)
+    open_today_count = 0 if pd.isna(open_today_count) else int(open_today_count)
+    open_today_value = 0 if pd.isna(open_today_value) else float(open_today_value)
     if target <= 0:
         st.info("Sem meta geral cadastrada para montar o indicador.")
         return
 
-    max_value = max(target * 1.2, value * 1.05, 1)
-    progress = min(max(value / max_value, 0), 1)
-    target_ratio = min(max(target / max_value, 0), 1)
+    gap = max(target - value, 0)
+    progress = min(max(value / target, 0), 1)
     pct_target = value / target if target else 0
     color = "#bf616a" if pct_target < 0.75 else "#b7791f" if pct_target < 1 else "#2f6f73"
 
     cx, cy, radius = 320, 230, 185
     bg_path = gauge_path(cx, cy, radius, 0, 1)
     value_path = gauge_path(cx, cy, radius, 0, progress)
-    target_inner = gauge_point(cx, cy, radius - 26, target_ratio)
-    target_outer = gauge_point(cx, cy, radius + 6, target_ratio)
 
     st.markdown(
         f"""
-        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:12px 16px;background:rgba(15,23,42,.12);max-width:760px;margin:12px auto 16px;">
-            <div style="color:rgba(255,255,255,.84);font-size:.9rem;font-weight:700;margin-bottom:4px;">{escape(title)}</div>
-            <svg viewBox="0 0 640 290" width="100%" height="260" style="display:block;max-height:260px;" role="img" aria-label="{escape(title)}">
-                <path d="{bg_path}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="58" stroke-linecap="butt"/>
-                <path d="{value_path}" fill="none" stroke="{color}" stroke-width="58" stroke-linecap="butt"/>
-                <line x1="{target_inner[0]:.2f}" y1="{target_inner[1]:.2f}" x2="{target_outer[0]:.2f}" y2="{target_outer[1]:.2f}" stroke="#2f6f73" stroke-width="3"/>
-                <text x="320" y="212" text-anchor="middle" fill="#ffffff" font-size="34" font-weight="500">{escape(money_fmt(value))}</text>
-                <text x="320" y="244" text-anchor="middle" fill="rgba(255,255,255,.72)" font-size="16">{escape(pct_fmt(pct_target))} da meta</text>
-                <text x="110" y="274" fill="rgba(255,255,255,.70)" font-size="15">{escape(money_fmt(0))}</text>
-                <text x="472" y="160" fill="rgba(255,255,255,.78)" font-size="15">Meta {escape(money_fmt(target))}</text>
-                <text x="456" y="274" fill="rgba(255,255,255,.70)" font-size="15">{escape(money_fmt(max_value))}</text>
-            </svg>
+        <div style="border:1px solid rgba(47,111,115,.55);border-radius:8px;padding:12px 14px;background:rgba(15,23,42,.10);max-width:940px;margin:12px auto 18px;">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;">
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+                        <div style="color:#ffffff;font-size:1.65rem;font-weight:650;line-height:1.1;">{escape(title)}</div>
+                        <div style="color:#ffffff;font-size:1.25rem;font-weight:650;line-height:1.1;">{escape(month_label)}</div>
+                    </div>
+                    <svg viewBox="0 0 640 290" width="100%" height="260" style="display:block;max-height:260px;" role="img" aria-label="{escape(title)}">
+                        <path d="{bg_path}" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="70" stroke-linecap="butt"/>
+                        <path d="{value_path}" fill="none" stroke="{color}" stroke-width="70" stroke-linecap="butt"/>
+                        <rect x="260" y="145" width="120" height="54" rx="10" fill="rgba(255,255,255,.72)"/>
+                        <text x="320" y="181" text-anchor="middle" fill="#2f6f73" font-size="28" font-weight="700">{escape(pct_fmt(pct_target))}</text>
+                        <text x="320" y="246" text-anchor="middle" fill="#ffffff" font-size="34" font-weight="500">{escape(money_fmt(value))}</text>
+                        <text x="118" y="274" fill="rgba(255,255,255,.72)" font-size="15">{escape(money_fmt(0))}</text>
+                        <text x="466" y="274" fill="rgba(255,255,255,.72)" font-size="15">{escape(money_fmt(target))}</text>
+                    </svg>
+                </div>
+                <div style="width:190px;display:flex;flex-direction:column;gap:10px;">
+                    <div style="border-radius:6px;overflow:hidden;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.94);color:#0f172a;">
+                        <div style="background:#082f3f;color:#ffffff;text-align:center;font-weight:800;font-size:.86rem;padding:6px;">GAP</div>
+                        <div style="font-size:1.15rem;font-weight:650;text-align:center;padding:10px 8px;">{escape(money_fmt(gap))}</div>
+                    </div>
+                    <div style="border-radius:6px;overflow:hidden;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.94);color:#0f172a;">
+                        <div style="text-align:center;font-weight:800;font-size:.86rem;padding:6px 6px 4px;">Hoje</div>
+                        <div style="display:grid;grid-template-columns:1fr auto;gap:6px;border-top:1px solid rgba(15,23,42,.25);padding:5px 8px;font-size:.86rem;">
+                            <span>Em aberto</span><strong>{escape(num_fmt(open_today_count))}</strong>
+                        </div>
+                        <div style="border-top:1px solid rgba(15,23,42,.18);padding:6px 8px;text-align:center;font-size:1rem;font-weight:650;color:#0f5f6b;">{escape(money_fmt(open_today_value))}</div>
+                    </div>
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1938,6 +1957,10 @@ with tabs[7]:
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
     valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
+    hoje = pd.Timestamp.today().normalize()
+    abertos_hoje = resultados[resultados["IS_EM_ABERTO"] & resultados["DATA_VENCIMENTO"].dt.normalize().eq(hoje)]
+    boletos_abertos_hoje = len(abertos_hoje)
+    valor_aberto_hoje = abertos_hoje["VALOR_EM_ABERTO"].sum()
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -1954,7 +1977,7 @@ with tabs[7]:
     with c6:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
-    meta_gauge(recebido_meta_geral, meta_geral)
+    meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje)
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
