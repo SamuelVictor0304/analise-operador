@@ -1176,7 +1176,31 @@ def gauge_path(cx, cy, radius, start_ratio, end_ratio):
     return f"M {start_x:.2f} {start_y:.2f} A {radius} {radius} 0 0 1 {end_x:.2f} {end_y:.2f}"
 
 
-def meta_gauge(value, target, month_label, open_today_count, open_today_value, title="Recebimento Total"):
+def hex_to_rgb(color):
+    color = color.lstrip("#")
+    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def blend_hex(start, end, ratio):
+    ratio = min(max(ratio, 0), 1)
+    start_rgb = hex_to_rgb(start)
+    end_rgb = hex_to_rgb(end)
+    blended = [round(a + (b - a) * ratio) for a, b in zip(start_rgb, end_rgb)]
+    return "#{:02x}{:02x}{:02x}".format(*blended)
+
+
+def meta_progress_color(pct):
+    pct = 0 if pd.isna(pct) else min(max(float(pct), 0), 1)
+    if pct <= 0.40:
+        return blend_hex("#9f1d2f", "#de6a76", pct / 0.40)
+    if pct <= 0.70:
+        return blend_hex("#c95616", "#f2a23a", (pct - 0.40) / 0.30)
+    if pct <= 0.80:
+        return blend_hex("#d4a514", "#ffe071", (pct - 0.70) / 0.10)
+    return blend_hex("#1f7a4d", "#72d391", (pct - 0.80) / 0.20)
+
+
+def meta_gauge(value, target, month_label, open_today_count, open_today_value, open_today_rows=None, title="Recebimento Total"):
     value = 0 if pd.isna(value) else float(value)
     target = 0 if pd.isna(target) else float(target)
     open_today_count = 0 if pd.isna(open_today_count) else int(open_today_count)
@@ -1188,7 +1212,20 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, t
     gap = max(target - value, 0)
     progress = min(max(value / target, 0), 1)
     pct_target = value / target if target else 0
-    color = "#bf616a" if pct_target < 0.75 else "#b7791f" if pct_target < 1 else "#2f6f73"
+    color = meta_progress_color(pct_target)
+    open_today_rows = open_today_rows if open_today_rows is not None else pd.DataFrame()
+    if open_today_rows.empty:
+        open_today_html = '<div class="meta-tooltip__empty">Sem boletos em aberto para hoje.</div>'
+    else:
+        items = []
+        for _, row in open_today_rows.sort_values(["OPERADOR", "CONTRATO_KEY"]).iterrows():
+            contrato = normalize_text(row.get("CONTRATO_KEY", ""))
+            operador = normalize_text(row.get("OPERADOR", ""))
+            valor = money_fmt(row.get("VALOR_EM_ABERTO", 0))
+            items.append(
+                f'<div class="meta-tooltip__row"><span>{escape(contrato)}</span><span>{escape(operador)}</span><strong>{escape(valor)}</strong></div>'
+            )
+        open_today_html = "".join(items)
 
     cx, cy, radius = 320, 230, 185
     bg_path = gauge_path(cx, cy, radius, 0, 1)
@@ -1196,6 +1233,98 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, t
 
     st.markdown(
         f"""
+        <style>
+        .meta-panel__side {{
+            width: 190px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .meta-panel__card {{
+            border: 1px solid rgba(125, 211, 252, .24);
+            border-radius: 7px;
+            background: rgba(2, 47, 63, .72);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+            color: #f8fafc;
+            overflow: visible;
+        }}
+        .meta-panel__card-title {{
+            padding: 7px 10px;
+            border-bottom: 1px solid rgba(125, 211, 252, .18);
+            color: rgba(255,255,255,.86);
+            font-size: .76rem;
+            font-weight: 800;
+            text-align: center;
+            text-transform: uppercase;
+        }}
+        .meta-panel__value {{
+            padding: 10px 10px;
+            text-align: center;
+            font-size: 1.02rem;
+            font-weight: 750;
+        }}
+        .meta-panel__open {{
+            position: relative;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(125, 211, 252, .18);
+            cursor: default;
+            font-size: .86rem;
+        }}
+        .meta-panel__open span {{
+            color: rgba(255,255,255,.82);
+        }}
+        .meta-panel__today-value {{
+            padding: 9px 10px;
+            text-align: center;
+            color: #9ee7ef;
+            font-weight: 760;
+        }}
+        .meta-tooltip {{
+            display: none;
+            position: absolute;
+            top: 34px;
+            right: 0;
+            z-index: 20;
+            width: 380px;
+            max-height: 260px;
+            overflow: auto;
+            padding: 10px;
+            border: 1px solid rgba(125, 211, 252, .34);
+            border-radius: 7px;
+            background: #07111f;
+            box-shadow: 0 18px 34px rgba(0,0,0,.35);
+        }}
+        .meta-panel__open:hover .meta-tooltip {{
+            display: block;
+        }}
+        .meta-tooltip__title {{
+            margin-bottom: 8px;
+            color: #f8fafc;
+            font-size: .82rem;
+            font-weight: 800;
+        }}
+        .meta-tooltip__row {{
+            display: grid;
+            grid-template-columns: 78px 1fr auto;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 0;
+            border-top: 1px solid rgba(148,163,184,.18);
+            color: rgba(255,255,255,.84);
+            font-size: .78rem;
+            white-space: nowrap;
+        }}
+        .meta-tooltip__row strong {{
+            color: #9ee7ef;
+        }}
+        .meta-tooltip__empty {{
+            color: rgba(255,255,255,.78);
+            font-size: .8rem;
+        }}
+        </style>
         <div style="border:1px solid rgba(47,111,115,.55);border-radius:8px;padding:12px 14px;background:rgba(15,23,42,.10);max-width:940px;margin:12px auto 18px;">
             <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;">
                 <div>
@@ -1213,17 +1342,21 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, t
                         <text x="466" y="274" fill="rgba(255,255,255,.72)" font-size="15">{escape(money_fmt(target))}</text>
                     </svg>
                 </div>
-                <div style="width:190px;display:flex;flex-direction:column;gap:10px;">
-                    <div style="border-radius:6px;overflow:hidden;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.94);color:#0f172a;">
-                        <div style="background:#082f3f;color:#ffffff;text-align:center;font-weight:800;font-size:.86rem;padding:6px;">GAP</div>
-                        <div style="font-size:1.15rem;font-weight:650;text-align:center;padding:10px 8px;">{escape(money_fmt(gap))}</div>
+                <div class="meta-panel__side">
+                    <div class="meta-panel__card">
+                        <div class="meta-panel__card-title">GAP</div>
+                        <div class="meta-panel__value">{escape(money_fmt(gap))}</div>
                     </div>
-                    <div style="border-radius:6px;overflow:hidden;border:1px solid rgba(148,163,184,.28);background:rgba(255,255,255,.94);color:#0f172a;">
-                        <div style="text-align:center;font-weight:800;font-size:.86rem;padding:6px 6px 4px;">Hoje</div>
-                        <div style="display:grid;grid-template-columns:1fr auto;gap:6px;border-top:1px solid rgba(15,23,42,.25);padding:5px 8px;font-size:.86rem;">
+                    <div class="meta-panel__card">
+                        <div class="meta-panel__card-title">Hoje</div>
+                        <div class="meta-panel__open">
                             <span>Em aberto</span><strong>{escape(num_fmt(open_today_count))}</strong>
+                            <div class="meta-tooltip">
+                                <div class="meta-tooltip__title">Boletos em aberto hoje</div>
+                                {open_today_html}
+                            </div>
                         </div>
-                        <div style="border-top:1px solid rgba(15,23,42,.18);padding:6px 8px;text-align:center;font-size:1rem;font-weight:650;color:#0f5f6b;">{escape(money_fmt(open_today_value))}</div>
+                        <div class="meta-panel__today-value">{escape(money_fmt(open_today_value))}</div>
                     </div>
                 </div>
             </div>
@@ -1977,7 +2110,7 @@ with tabs[7]:
     with c6:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
-    meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje)
+    meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje, abertos_hoje)
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
