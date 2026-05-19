@@ -1218,12 +1218,12 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
         open_today_html = '<div class="meta-tooltip__empty">Sem boletos em aberto para hoje.</div>'
     else:
         items = []
-        for _, row in open_today_rows.sort_values(["OPERADOR", "CONTRATO_KEY"]).iterrows():
-            contrato = normalize_text(row.get("CONTRATO_KEY", ""))
+        for _, row in open_today_rows.sort_values(["OPERADOR", "NOME DO CLIENTE"]).iterrows():
+            cliente = normalize_text(row.get("NOME DO CLIENTE", "Cliente sem nome"))
             operador = normalize_text(row.get("OPERADOR", ""))
             valor = money_fmt(row.get("VALOR_EM_ABERTO", 0))
             items.append(
-                f'<div class="meta-tooltip__row"><span>{escape(contrato)}</span><span>{escape(operador)}</span><strong>{escape(valor)}</strong></div>'
+                f'<div class="meta-tooltip__row"><span>{escape(cliente)}</span><span>{escape(operador)}</span><strong>{escape(valor)}</strong></div>'
             )
         open_today_html = "".join(items)
 
@@ -1288,7 +1288,7 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
             top: 34px;
             right: 0;
             z-index: 20;
-            width: 380px;
+            width: 460px;
             max-height: 260px;
             overflow: auto;
             padding: 10px;
@@ -1308,13 +1308,17 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
         }}
         .meta-tooltip__row {{
             display: grid;
-            grid-template-columns: 78px 1fr auto;
+            grid-template-columns: minmax(150px, 1fr) 120px auto;
             gap: 8px;
             align-items: center;
             padding: 6px 0;
             border-top: 1px solid rgba(148,163,184,.18);
             color: rgba(255,255,255,.84);
             font-size: .78rem;
+        }}
+        .meta-tooltip__row span {{
+            overflow: hidden;
+            text-overflow: ellipsis;
             white-space: nowrap;
         }}
         .meta-tooltip__row strong {{
