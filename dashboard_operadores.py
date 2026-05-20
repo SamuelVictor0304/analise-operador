@@ -1677,39 +1677,43 @@ valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
 pct_quebra_geral = total_nao_pagou / total_acordos if total_acordos else 0
 
-kpi_row = st.columns(6)
-with kpi_row[0]:
+kpi_row1 = st.columns(5)
+kpi_row2 = st.columns(6)
+kpi_row3 = st.columns(3)
+with kpi_row1[0]:
     metric_card("Clientes", num_fmt(total_clientes))
-with kpi_row[1]:
+with kpi_row1[1]:
+    metric_card("Acionamentos", num_fmt(total_acionamentos))
+with kpi_row1[2]:
+    metric_card("Contatos efetivos", num_fmt(total_contatos))
+with kpi_row1[3]:
     metric_card("Acordos", num_fmt(total_acordos))
-with kpi_row[2]:
+with kpi_row1[4]:
     metric_card("Pagamentos", num_fmt(total_pagamentos))
-with kpi_row[5]:
+with kpi_row2[0]:
+    metric_card("Em aberto", num_fmt(total_em_aberto))
+with kpi_row2[1]:
+    metric_card("NÃ£o pagou", num_fmt(total_nao_pagou))
+with kpi_row2[2]:
+    metric_card("Negociado", money_fmt(valor_negociado))
+with kpi_row2[5]:
     metric_card("Efetividade pgto", pct_fmt(efetividade_pagamento_geral))
 
-with kpi_row[3]:
+with kpi_row2[3]:
     metric_card("Recebido", money_fmt(valor_pago))
-with kpi_row[4]:
+with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
 tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Insights"])
 
-with tabs[0]:
-    st.subheader("Acompanhamento financeiro")
-    a1, a2, a3, a4, a5, a6 = st.columns(6)
-    with a1:
-        metric_card("Acionamentos", num_fmt(total_acionamentos))
-    with a2:
-        metric_card("Contatos efetivos", num_fmt(total_contatos))
-    with a3:
-        metric_card("Negociado", money_fmt(valor_negociado))
-    with a4:
-        metric_card("Em aberto", f"{num_fmt(total_em_aberto)} | {money_fmt(valor_em_aberto)}")
-    with a5:
-        metric_card("Quebras", f"{num_fmt(total_nao_pagou)} | {money_fmt(valor_nao_pagou)}")
-    with a6:
-        metric_card("% quebras", pct_fmt(pct_quebra_geral))
+with kpi_row3[0]:
+    metric_card("% quebras", pct_fmt(pct_quebra_geral))
+with kpi_row3[1]:
+    metric_card("Valor quebras", money_fmt(valor_nao_pagou))
+with kpi_row3[2]:
+    metric_card("Base quebras", f"{num_fmt(total_nao_pagou)} de {num_fmt(total_acordos)}")
 
+with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
     with c1:
         top = display_fields(operador_df.head(12))
@@ -1764,6 +1768,21 @@ with tabs[0]:
         title="Distribuição financeira por status",
         sort=None,
         height=260,
+    )
+
+    quebra_chart = display_fields(
+        operador_df[operador_df["acordos_nao_pagou"] > 0]
+        .sort_values("valor_quebra", ascending=False)
+        .head(10)
+    )
+    bar_chart(
+        quebra_chart,
+        x="valor_quebra:Q",
+        y="OPERADOR:N",
+        color="OPERADOR:N",
+        tooltip=["OPERADOR", "acordos_nao_pagou_br", "pct_quebra_br", "valor_quebra_br"],
+        title="Quebras por operador",
+        height=320,
     )
 
     by_mes_eventos = eventos.groupby("MES").agg(acionamentos=("EVENTO_TXT", "size"), contatos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
