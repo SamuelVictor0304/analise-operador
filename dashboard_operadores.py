@@ -153,6 +153,7 @@ FIELD_HELP = {
     "acordos_sem_pagamento": ("Acordos sem pagamento", "Acordos sem status pago e sem data de pagamento."),
     "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO ou status vazio sem data de pagamento."),
     "acordos_nao_pagou": ("Acordos não pagos", "Acordos com status NÃO PAGOU na base de resultados."),
+    "pct_quebra": ("% quebras", "Acordos não pagos divididos pelo total de acordos."),
     "tx_contato": ("Taxa de CPC", "CPCs divididos pelo total de acionamentos."),
     "tx_acordo": ("Taxa CPC -> acordo", "Acordos divididos pelo total de CPCs do operador."),
     "tx_acordo_cliente_cpc": ("Taxa contrato CPC -> acordo", "Acordos divididos pelos contratos distintos com CPC."),
@@ -170,6 +171,7 @@ FIELD_HELP = {
     "valor_pago": ("Valor recebido", "Valor negociado dos acordos pagos; acordos não pagos entram como R$ 0,00."),
     "valor_em_aberto": ("Valor em aberto", "Valor negociado dos acordos com status EM ABERTO ou status vazio sem data de pagamento."),
     "valor_nao_pagou": ("Valor não pago", "Valor negociado dos acordos com status NÃO PAGOU."),
+    "valor_quebra": ("Valor quebras", "Valor negociado dos acordos não pagos."),
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
@@ -507,10 +509,12 @@ def build_meta_analysis(operador_df, resultados, operadores_scope=None):
         "acordos_sem_pagamento",
         "acordos_em_aberto",
         "acordos_nao_pagou",
+        "pct_quebra",
         "valor_negociado",
         "valor_pago",
         "valor_em_aberto",
         "valor_nao_pagou",
+        "valor_quebra",
         "ticket_medio",
         "tx_contato",
         "tx_acordo",
@@ -927,6 +931,8 @@ def aggregate_operator(eventos, resultados):
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
     df["tx_pagamento_cpc"] = safe_div(df["pagamentos"], df["cpcs"])
     df["tx_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
+    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
+    df["valor_quebra"] = df["valor_nao_pagou"]
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     df["score"] = (
         df["tx_contato"].rank(pct=True) * 0.15
@@ -989,6 +995,8 @@ def aggregate_cpc_operator(eventos, resultados):
     df["tx_acordo_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
     df["tx_acordo_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
+    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
+    df["valor_quebra"] = df["valor_nao_pagou"]
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
@@ -1008,6 +1016,8 @@ def aggregate_resultados(resultados, dimension):
     ).reset_index()
     df["tx_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
+    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
+    df["valor_quebra"] = df["valor_nao_pagou"]
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     return df
 
@@ -1442,6 +1452,7 @@ def display_fields(df):
         "valor_pago",
         "valor_em_aberto",
         "valor_nao_pagou",
+        "valor_quebra",
         "ticket_medio",
         "meta_individual",
         "saldo_meta_individual",
@@ -1458,6 +1469,7 @@ def display_fields(df):
         "tx_acordo_cliente_cpc",
         "tx_pagamento",
         "efetividade_pagamento",
+        "pct_quebra",
         "tx_pagamento_cpc",
         "tx_sem_pagamento",
         "tx_cpc_acordo",
@@ -1522,6 +1534,7 @@ def formatted_table(df):
         "valor_pago",
         "valor_em_aberto",
         "valor_nao_pagou",
+        "valor_quebra",
         "ticket_medio",
         "meta_individual",
         "saldo_meta_individual",
@@ -1540,6 +1553,7 @@ def formatted_table(df):
         "tx_acordo_cliente_cpc",
         "tx_pagamento",
         "efetividade_pagamento",
+        "pct_quebra",
         "tx_pagamento_cpc",
         "tx_sem_pagamento",
         "tx_cpc_acordo",
@@ -1661,9 +1675,11 @@ valor_pago = resultados["VALOR_PAGO"].sum()
 valor_em_aberto = resultados["VALOR_EM_ABERTO"].sum()
 valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
+pct_quebra_geral = total_nao_pagou / total_acordos if total_acordos else 0
 
 kpi_row1 = st.columns(5)
 kpi_row2 = st.columns(6)
+kpi_row3 = st.columns(3)
 with kpi_row1[0]:
     metric_card("Clientes", num_fmt(total_clientes))
 with kpi_row1[1]:
@@ -1686,6 +1702,13 @@ with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
 tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Insights"])
+
+with kpi_row3[0]:
+    metric_card("% quebras", pct_fmt(pct_quebra_geral))
+with kpi_row3[1]:
+    metric_card("Valor quebras", money_fmt(valor_nao_pagou))
+with kpi_row3[2]:
+    metric_card("Base quebras", f"{num_fmt(total_nao_pagou)} de {num_fmt(total_acordos)}")
 
 with kpi_row2[5]:
     metric_card("Efetividade pgto", pct_fmt(efetividade_pagamento_geral))
@@ -1801,6 +1824,7 @@ with tabs[1]:
         "acordos_sem_pagamento",
         "acordos_em_aberto",
         "acordos_nao_pagou",
+        "pct_quebra",
         "tx_contato",
         "tx_acordo",
         "tx_pagamento_cpc",
@@ -1811,6 +1835,7 @@ with tabs[1]:
         "valor_pago",
         "valor_em_aberto",
         "valor_nao_pagou",
+        "valor_quebra",
         "ticket_medio",
         "recuperacao",
         "score",
@@ -1910,6 +1935,7 @@ with tabs[2]:
         "acordos_sem_pagamento",
         "acordos_em_aberto",
         "acordos_nao_pagou",
+        "pct_quebra",
         "tx_cpc_acordo",
         "tx_cpc_pagamento",
         "tx_cpc_unico_acordo",
@@ -1921,6 +1947,7 @@ with tabs[2]:
         "valor_pago",
         "valor_em_aberto",
         "valor_nao_pagou",
+        "valor_quebra",
         "ticket_medio",
         "recuperacao",
     ]
@@ -1968,6 +1995,8 @@ with tabs[3]:
     )
     best_faixa["tx_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["acordos"])
     best_faixa["efetividade_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["pagamentos"] + best_faixa["acordos_nao_pagou"])
+    best_faixa["pct_quebra"] = safe_div(best_faixa["acordos_nao_pagou"], best_faixa["acordos"])
+    best_faixa["valor_quebra"] = best_faixa["valor_nao_pagou"]
     best_faixa = best_faixa.sort_values(["FAIXA_ATRASO", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("FAIXA_ATRASO").head(1)
     st.subheader("Melhor operador por faixa")
     data_table(best_faixa)
@@ -2023,13 +2052,15 @@ with tabs[4]:
     )
     best_segmento["tx_pagamento"] = safe_div(best_segmento["pagamentos"], best_segmento["acordos"])
     best_segmento["efetividade_pagamento"] = safe_div(best_segmento["pagamentos"], best_segmento["pagamentos"] + best_segmento["acordos_nao_pagou"])
+    best_segmento["pct_quebra"] = safe_div(best_segmento["acordos_nao_pagou"], best_segmento["acordos"])
+    best_segmento["valor_quebra"] = best_segmento["valor_nao_pagou"]
     best_segmento["recuperacao"] = safe_div(best_segmento["valor_pago"], best_segmento["valor_negociado"])
     best_segmento = best_segmento.sort_values(["SEGMENTO_DPD", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("SEGMENTO_DPD").head(3)
     st.subheader("Top operadores por segmento DPD")
     data_table(best_segmento)
 
     st.subheader("Resumo por segmento DPD")
-    data_table(segmento_df[["SEGMENTO_DPD", "clientes", "acionamentos", "contatos_efetivos", "tx_contato", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
+    data_table(segmento_df[["SEGMENTO_DPD", "clientes", "acionamentos", "contatos_efetivos", "tx_contato", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
 
 with tabs[5]:
     regiao_df = aggregate_resultados(resultados, "REGIÃO").sort_values("valor_pago", ascending=False)
@@ -2067,6 +2098,8 @@ with tabs[5]:
         .reset_index()
     )
     best_regiao["efetividade_pagamento"] = safe_div(best_regiao["pagamentos"], best_regiao["pagamentos"] + best_regiao["acordos_nao_pagou"])
+    best_regiao["pct_quebra"] = safe_div(best_regiao["acordos_nao_pagou"], best_regiao["acordos"])
+    best_regiao["valor_quebra"] = best_regiao["valor_nao_pagou"]
     best_regiao["recuperacao"] = safe_div(best_regiao["valor_pago"], best_regiao["valor_negociado"])
     best_regiao = best_regiao.sort_values(["REGIÃO", "valor_pago", "recuperacao"], ascending=[True, False, False]).groupby("REGIÃO").head(3)
     st.subheader("Top operadores por região")
@@ -2089,15 +2122,17 @@ with tabs[6]:
     )
     matrix["tx_pagamento"] = safe_div(matrix["pagamentos"], matrix["acordos"])
     matrix["efetividade_pagamento"] = safe_div(matrix["pagamentos"], matrix["pagamentos"] + matrix["acordos_nao_pagou"])
+    matrix["pct_quebra"] = safe_div(matrix["acordos_nao_pagou"], matrix["acordos"])
+    matrix["valor_quebra"] = matrix["valor_nao_pagou"]
     matrix["recuperacao"] = safe_div(matrix["valor_pago"], matrix["valor_negociado"])
 
     metric_choice = st.selectbox(
         "Métrica da matriz",
-        ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "tx_pagamento", "efetividade_pagamento", "recuperacao", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"],
+        ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "tx_pagamento", "efetividade_pagamento", "pct_quebra", "recuperacao", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"],
         index=0,
     )
     heat_data = matrix.groupby(["OPERADOR", "FAIXA_ATRASO"]).agg(
-        {metric_choice: "sum" if metric_choice in ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"] else "mean"}
+        {metric_choice: "sum" if metric_choice in ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"] else "mean"}
     ).reset_index()
     heatmap(display_fields(heat_data), "FAIXA_ATRASO:N", "OPERADOR:N", f"{metric_choice}:Q", "Operador x faixa de atraso")
 
@@ -2188,6 +2223,8 @@ with tabs[7]:
         "atingimento_meta_individual",
         "pct_aberto_meta_individual",
         "efetividade_pagamento",
+        "pct_quebra",
+        "valor_quebra",
         "saldo_meta_individual",
         "meta_geral_escritorio",
         "participacao_meta_geral",
@@ -2466,7 +2503,7 @@ with tabs[9]:
         data_table(oportunidades[["OPERADOR", "score", "acionamentos", "tx_contato", "tx_acordo", "valor_pago"]].head(10))
 
     st.subheader("Faixas com maior oportunidade de recuperação")
-    data_table(faixas_oportunidade[["FAIXA_ATRASO", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
+    data_table(faixas_oportunidade[["FAIXA_ATRASO", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
 
     st.subheader("Segmentos DPD com maior oportunidade de recuperação")
-    data_table(segmentos_oportunidade[["SEGMENTO_DPD", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "recuperacao"]])
+    data_table(segmentos_oportunidade[["SEGMENTO_DPD", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
