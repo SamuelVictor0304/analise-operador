@@ -63,10 +63,10 @@ function Wait-FileStable {
 }
 
 function Invoke-Git {
-    param([string[]]$Args)
-    $output = & git @Args 2>&1
+    param([string[]]$GitArgs)
+    $output = & git @GitArgs 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "git $($Args -join ' ') falhou:`n$output"
+        throw "git $($GitArgs -join ' ') falhou:`n$output"
     }
     return $output
 }
@@ -84,7 +84,7 @@ function Commit-Resultados {
     }
 
     Write-Log "Alteracao detectada em '$FileName'. Criando commit."
-    Invoke-Git -Args @("add", "--", $FileName) | Out-Null
+    Invoke-Git -GitArgs @("add", "--", $FileName) | Out-Null
 
     $staged = & git diff --cached --name-only -- $FileName
     if ([string]::IsNullOrWhiteSpace($staged)) {
@@ -93,16 +93,16 @@ function Commit-Resultados {
     }
 
     $commitStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Invoke-Git -Args @("commit", "-m", "Atualiza base de resultados ($commitStamp)") | Out-Null
+    Invoke-Git -GitArgs @("commit", "-m", "Atualiza base de resultados ($commitStamp)") | Out-Null
 
     try {
-        Invoke-Git -Args @("push", $Remote, $Branch) | Out-Null
+        Invoke-Git -GitArgs @("push", $Remote, $Branch) | Out-Null
         Write-Log "Commit enviado para $Remote/$Branch."
     }
     catch {
         Write-Log "Push falhou. Tentando rebase antes de reenviar."
-        Invoke-Git -Args @("pull", "--rebase", $Remote, $Branch) | Out-Null
-        Invoke-Git -Args @("push", $Remote, $Branch) | Out-Null
+        Invoke-Git -GitArgs @("pull", "--rebase", $Remote, $Branch) | Out-Null
+        Invoke-Git -GitArgs @("push", $Remote, $Branch) | Out-Null
         Write-Log "Commit enviado para $Remote/$Branch apos rebase."
     }
 }
