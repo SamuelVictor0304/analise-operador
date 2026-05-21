@@ -18,6 +18,8 @@ RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
+DEFAULT_OPERATOR_GOAL = 150000
+DOUBLE_GOAL_OPERATORS = {"ana.karolina.oliveira", "luiz.mauro"}
 POSTGRES_DEFAULTS = {
     "host": "",
     "port": 5432,
@@ -153,7 +155,7 @@ FIELD_HELP = {
     "acordos_sem_pagamento": ("Acordos sem pagamento", "Acordos sem status pago e sem data de pagamento."),
     "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO ou status vazio sem data de pagamento."),
     "acordos_nao_pagou": ("Acordos não pagos", "Acordos com status NÃO PAGOU na base de resultados."),
-    "pct_quebra": ("% quebras", "Acordos não pagos divididos pelo total de acordos."),
+    "pct_quebra": ("% quebras", "Impacto financeiro das quebras na meta: valor dos acordos não pagos dividido pela meta aplicável."),
     "tx_contato": ("Taxa de CPC", "CPCs divididos pelo total de acionamentos."),
     "tx_acordo": ("Taxa CPC -> acordo", "Acordos divididos pelo total de CPCs do operador."),
     "tx_acordo_cliente_cpc": ("Taxa contrato CPC -> acordo", "Acordos divididos pelos contratos distintos com CPC."),
@@ -367,6 +369,21 @@ def selected_months(resultados):
     return meses.sort_values(["MES_NUM", "MES_RESULTADO"])["MES_RESULTADO"].tolist()
 
 
+def selected_months_count(resultados):
+    return max(len(selected_months(resultados)), 1)
+
+
+def office_goal_for_resultados(resultados):
+    metas_gerais = load_office_goals()
+    return sum(metas_gerais.get(mes, 0) for mes in selected_months(resultados))
+
+
+def operator_goal_series(operadores, meses_count):
+    operadores = operadores.fillna("")
+    base_goal = np.where(operadores.isin(DOUBLE_GOAL_OPERATORS), 300000, DEFAULT_OPERATOR_GOAL)
+    return pd.Series(base_goal * meses_count, index=operadores.index)
+
+
 @st.cache_data(show_spinner=False)
 def load_collaborators():
     if not COLABORADORES_FILE.exists():
@@ -534,9 +551,9 @@ def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     df["base_colaborador"] = df["base_colaborador"].fillna("Fora da base")
     df["cargo_colaborador"] = df["cargo_colaborador"].fillna("Não localizado")
 
-    pos_retomado = {"ana.karolina.oliveira", "luiz.mauro"}
-    df["meta_individual"] = np.where(df["OPERADOR"].isin(pos_retomado), 300000, 150000) * meses_count
+    df["meta_individual"] = operator_goal_series(df["OPERADOR"], meses_count)
     df["meta_geral_escritorio"] = meta_geral
+    df["pct_quebra"] = safe_div(df["valor_quebra"], df["meta_individual"])
     df["atingimento_meta_individual"] = safe_div(df["valor_pago"], df["meta_individual"])
     df["pct_aberto_meta_individual"] = safe_div(df["valor_em_aberto"], df["meta_individual"])
     df["saldo_meta_individual"] = df["valor_pago"] - df["meta_individual"]
@@ -931,8 +948,9 @@ def aggregate_operator(eventos, resultados):
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
     df["tx_pagamento_cpc"] = safe_div(df["pagamentos"], df["cpcs"])
     df["tx_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
-    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
     df["valor_quebra"] = df["valor_nao_pagou"]
+    df["meta_individual"] = operator_goal_series(df["OPERADOR"], selected_months_count(resultados))
+    df["pct_quebra"] = safe_div(df["valor_quebra"], df["meta_individual"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     df["score"] = (
         df["tx_contato"].rank(pct=True) * 0.15
@@ -995,8 +1013,9 @@ def aggregate_cpc_operator(eventos, resultados):
     df["tx_acordo_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
     df["tx_acordo_sem_pagamento"] = safe_div(df["acordos_sem_pagamento"], df["acordos"])
-    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
     df["valor_quebra"] = df["valor_nao_pagou"]
+    df["meta_individual"] = operator_goal_series(df["OPERADOR"], selected_months_count(resultados))
+    df["pct_quebra"] = safe_div(df["valor_quebra"], df["meta_individual"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
@@ -1016,8 +1035,8 @@ def aggregate_resultados(resultados, dimension):
     ).reset_index()
     df["tx_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
     df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
-    df["pct_quebra"] = safe_div(df["acordos_nao_pagou"], df["acordos"])
     df["valor_quebra"] = df["valor_nao_pagou"]
+    df["pct_quebra"] = safe_div(df["valor_quebra"], office_goal_for_resultados(resultados))
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
     return df
 
@@ -1674,8 +1693,9 @@ valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
 valor_pago = resultados["VALOR_PAGO"].sum()
 valor_em_aberto = resultados["VALOR_EM_ABERTO"].sum()
 valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
+meta_geral_atual = office_goal_for_resultados(resultados)
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
-pct_quebra_geral = total_nao_pagou / total_acordos if total_acordos else 0
+pct_quebra_geral = valor_nao_pagou / meta_geral_atual if meta_geral_atual else 0
 
 kpi_row1 = st.columns(5)
 kpi_row2 = st.columns(6)
@@ -2010,8 +2030,9 @@ with tabs[3]:
     )
     best_faixa["tx_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["acordos"])
     best_faixa["efetividade_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["pagamentos"] + best_faixa["acordos_nao_pagou"])
-    best_faixa["pct_quebra"] = safe_div(best_faixa["acordos_nao_pagou"], best_faixa["acordos"])
     best_faixa["valor_quebra"] = best_faixa["valor_nao_pagou"]
+    best_faixa["meta_individual"] = operator_goal_series(best_faixa["OPERADOR"], selected_months_count(resultados))
+    best_faixa["pct_quebra"] = safe_div(best_faixa["valor_quebra"], best_faixa["meta_individual"])
     best_faixa = best_faixa.sort_values(["FAIXA_ATRASO", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("FAIXA_ATRASO").head(1)
     st.subheader("Melhor operador por faixa")
     data_table(best_faixa)
@@ -2067,8 +2088,9 @@ with tabs[4]:
     )
     best_segmento["tx_pagamento"] = safe_div(best_segmento["pagamentos"], best_segmento["acordos"])
     best_segmento["efetividade_pagamento"] = safe_div(best_segmento["pagamentos"], best_segmento["pagamentos"] + best_segmento["acordos_nao_pagou"])
-    best_segmento["pct_quebra"] = safe_div(best_segmento["acordos_nao_pagou"], best_segmento["acordos"])
     best_segmento["valor_quebra"] = best_segmento["valor_nao_pagou"]
+    best_segmento["meta_individual"] = operator_goal_series(best_segmento["OPERADOR"], selected_months_count(resultados_segmento))
+    best_segmento["pct_quebra"] = safe_div(best_segmento["valor_quebra"], best_segmento["meta_individual"])
     best_segmento["recuperacao"] = safe_div(best_segmento["valor_pago"], best_segmento["valor_negociado"])
     best_segmento = best_segmento.sort_values(["SEGMENTO_DPD", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("SEGMENTO_DPD").head(3)
     st.subheader("Top operadores por segmento DPD")
@@ -2113,8 +2135,9 @@ with tabs[5]:
         .reset_index()
     )
     best_regiao["efetividade_pagamento"] = safe_div(best_regiao["pagamentos"], best_regiao["pagamentos"] + best_regiao["acordos_nao_pagou"])
-    best_regiao["pct_quebra"] = safe_div(best_regiao["acordos_nao_pagou"], best_regiao["acordos"])
     best_regiao["valor_quebra"] = best_regiao["valor_nao_pagou"]
+    best_regiao["meta_individual"] = operator_goal_series(best_regiao["OPERADOR"], selected_months_count(resultados))
+    best_regiao["pct_quebra"] = safe_div(best_regiao["valor_quebra"], best_regiao["meta_individual"])
     best_regiao["recuperacao"] = safe_div(best_regiao["valor_pago"], best_regiao["valor_negociado"])
     best_regiao = best_regiao.sort_values(["REGIÃO", "valor_pago", "recuperacao"], ascending=[True, False, False]).groupby("REGIÃO").head(3)
     st.subheader("Top operadores por região")
@@ -2137,8 +2160,9 @@ with tabs[6]:
     )
     matrix["tx_pagamento"] = safe_div(matrix["pagamentos"], matrix["acordos"])
     matrix["efetividade_pagamento"] = safe_div(matrix["pagamentos"], matrix["pagamentos"] + matrix["acordos_nao_pagou"])
-    matrix["pct_quebra"] = safe_div(matrix["acordos_nao_pagou"], matrix["acordos"])
     matrix["valor_quebra"] = matrix["valor_nao_pagou"]
+    matrix["meta_individual"] = operator_goal_series(matrix["OPERADOR"], selected_months_count(resultados))
+    matrix["pct_quebra"] = safe_div(matrix["valor_quebra"], matrix["meta_individual"])
     matrix["recuperacao"] = safe_div(matrix["valor_pago"], matrix["valor_negociado"])
 
     metric_choice = st.selectbox(
