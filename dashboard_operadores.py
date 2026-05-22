@@ -186,6 +186,10 @@ FIELD_HELP = {
     "quartil_meta_individual": ("Quartil meta individual", "Quartil do atingimento da meta individual. Q4 é o melhor grupo."),
     "quartil_meta_geral": ("Quartil meta geral", "Quartil da participação na meta geral do escritório. Q4 é o melhor grupo."),
     "diagnostico_meta": ("Diagnóstico meta", "Leitura gerencial combinando atingimento individual e contribuição na meta geral."),
+    "quartil_cpc_acordo": ("Quartil CPC → acordo", "Quartil da taxa de conversão CPC único → acordo. Q4 é o melhor grupo. Mínimo de 3 CPCs únicos para entrar no ranking."),
+    "quartil_cpc_pagamento": ("Quartil CPC → pagamento", "Quartil da taxa de conversão CPC único → pagamento. Q4 é o melhor grupo. Mínimo de 3 CPCs únicos para entrar no ranking."),
+    "quartil_cpc_volume": ("Quartil volume CPC", "Quartil da quantidade de CPCs únicos gerados pelo operador. Q4 é o melhor grupo. Mínimo de 1 CPC único para entrar no ranking."),
+    "diagnostico_cpc": ("Diagnóstico CPC", "Classificação da qualidade de conversão do CPC em pagamento: Alta conversão (≥20%), Boa conversão (≥10%), Atenção (≥5%) e Crítico (<5%). Sem base quando menos de 3 CPCs únicos."),
     "nome_colaborador": ("Nome colaborador", "Nome completo do colaborador conforme Base de colaboradores."),
     "base_colaborador": ("Base colaborador", "Aba/carteira da Base de colaboradores onde o login foi encontrado."),
     "cargo_colaborador": ("Cargo", "Cargo do colaborador conforme Base de colaboradores."),
@@ -590,6 +594,74 @@ def meta_operator_groups(df):
                     "Operadores": ", ".join(operadores) if operadores else "-",
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def cpc_operator_groups(df):
+    metrics = [
+        ("Volume de CPCs únicos", "quartil_cpc_volume"),
+        ("Conversão CPC único → acordo", "quartil_cpc_acordo"),
+        ("Conversão CPC único → pagamento", "quartil_cpc_pagamento"),
+    ]
+    groups = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
+    rows = []
+    for metric_label, metric_col in metrics:
+        for group in groups:
+            operadores = sorted(df.loc[df[metric_col].eq(group), "OPERADOR"].dropna().astype(str).tolist())
+            rows.append(
+                {
+                    "Métrica": metric_label,
+                    "Grupo": group,
+                    "Qtd. operadores": len(operadores),
+                    "Operadores": ", ".join(operadores) if operadores else "-",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def cpc_quartil_descritivo(df):
+    ordem = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
+    rows = []
+    for grupo in ordem:
+        sub = df[df["quartil_cpc_pagamento"].eq(grupo)]
+        if sub.empty:
+            continue
+        com_base = sub[sub["cpcs_unicos"] >= 3]
+        rows.append({
+            "Quartil": grupo,
+            "Qtd. operadores": len(sub),
+            "CPCs únicos (média)": num_fmt(com_base["cpcs_unicos"].mean()) if not com_base.empty else "-",
+            "CPC → acordo (média)": pct_fmt(com_base["tx_cpc_unico_acordo"].mean()) if not com_base.empty else "-",
+            "CPC → pgto (média)": pct_fmt(com_base["tx_cpc_unico_pagamento"].mean()) if not com_base.empty else "-",
+            "Efetividade pgto (média)": pct_fmt(com_base["efetividade_pagamento"].mean()) if not com_base.empty else "-",
+            "Acordos (total)": num_fmt(sub["acordos"].sum()),
+            "Pagamentos (total)": num_fmt(sub["pagamentos"].sum()),
+            "Acordos s/ pgto (total)": num_fmt(sub["acordos_sem_pagamento"].sum()),
+            "Valor recebido (total)": money_fmt(sub["valor_pago"].sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+def cpc_volume_quartil_descritivo(df):
+    ordem = ["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"]
+    rows = []
+    for grupo in ordem:
+        sub = df[df["quartil_cpc_volume"].eq(grupo)]
+        if sub.empty:
+            continue
+        com_base = sub[sub["cpcs_unicos"] >= 1]
+        rows.append({
+            "Quartil": grupo,
+            "Qtd. operadores": len(sub),
+            "CPCs únicos (média)": num_fmt(com_base["cpcs_unicos"].mean()) if not com_base.empty else "-",
+            "CPCs únicos (mín.)": num_fmt(com_base["cpcs_unicos"].min()) if not com_base.empty else "-",
+            "CPCs únicos (máx.)": num_fmt(com_base["cpcs_unicos"].max()) if not com_base.empty else "-",
+            "CPC → acordo (média)": pct_fmt(com_base["tx_cpc_unico_acordo"].mean()) if not com_base.empty else "-",
+            "CPC → pgto (média)": pct_fmt(com_base["tx_cpc_unico_pagamento"].mean()) if not com_base.empty else "-",
+            "Acordos (total)": num_fmt(sub["acordos"].sum()),
+            "Pagamentos (total)": num_fmt(sub["pagamentos"].sum()),
+            "Valor recebido (total)": money_fmt(sub["valor_pago"].sum()),
+        })
     return pd.DataFrame(rows)
 
 
@@ -1017,6 +1089,22 @@ def aggregate_cpc_operator(eventos, resultados):
     df["meta_individual"] = operator_goal_series(df["OPERADOR"], selected_months_count(resultados))
     df["pct_quebra"] = safe_div(df["valor_quebra"], df["meta_individual"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
+    df["quartil_cpc_acordo"] = quartile_label(df["tx_cpc_unico_acordo"], min_series=df["cpcs_unicos"], min_value=3)
+    df["quartil_cpc_pagamento"] = quartile_label(df["tx_cpc_unico_pagamento"], min_series=df["cpcs_unicos"], min_value=3)
+    df["quartil_cpc_volume"] = quartile_label(df["cpcs_unicos"], min_series=df["cpcs_unicos"], min_value=1)
+    df["diagnostico_cpc"] = np.where(
+        df["cpcs_unicos"] < 3,
+        "Sem base",
+        np.select(
+            [
+                df["tx_cpc_unico_pagamento"] >= 0.20,
+                df["tx_cpc_unico_pagamento"] >= 0.10,
+                df["tx_cpc_unico_pagamento"] >= 0.05,
+            ],
+            ["Alta conversão", "Boa conversão", "Atenção"],
+            default="Crítico",
+        ),
+    )
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
 
@@ -1881,17 +1969,21 @@ with tabs[2]:
     st.subheader("Conversão CPC para acordos e pagamentos")
     st.caption("CPC considerado pelos eventos iniciados por 02, 03, 04 e 05.")
 
+    _unicos_total = float(cpc_df["cpcs_unicos"].sum())
+    _tx_acordo_geral = cpc_df["acordos"].sum() / _unicos_total if _unicos_total else 0
+    _tx_pag_geral = cpc_df["pagamentos"].sum() / _unicos_total if _unicos_total else 0
+
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
-        metric_card("CPCs", num_fmt(cpc_df["cpcs"].sum()))
-    with c2:
         metric_card("CPCs únicos", num_fmt(cpc_df["cpcs_unicos"].sum()))
+    with c2:
+        metric_card("Tx CPC único → acordo", pct_fmt(_tx_acordo_geral))
     with c3:
-        metric_card("Acordos após CPC", num_fmt(cpc_df["acordos"].sum()))
+        metric_card("Tx CPC único → pagto", pct_fmt(_tx_pag_geral))
     with c4:
-        metric_card("Pagamentos", num_fmt(cpc_df["pagamentos"].sum()))
+        metric_card("Acordos após CPC", num_fmt(cpc_df["acordos"].sum()))
     with c5:
-        metric_card("Acordos sem pagamento", num_fmt(cpc_df["acordos_sem_pagamento"].sum()))
+        metric_card("Pagamentos", num_fmt(cpc_df["pagamentos"].sum()))
     with c6:
         metric_card("Em aberto", num_fmt(cpc_df["acordos_em_aberto"].sum()))
     with c7:
@@ -1904,8 +1996,8 @@ with tabs[2]:
             cpc_chart,
             x=alt.X("tx_cpc_unico_acordo:Q", axis=alt.Axis(format="%")),
             y="OPERADOR:N",
-            tooltip=["OPERADOR", "cpcs_br", "cpcs_unicos_br", "acordos_br", "tx_cpc_unico_acordo_br", "valor_negociado_br"],
-            title="Conversão CPC único -> acordo por negociador",
+            tooltip=["OPERADOR", "cpcs_unicos_br", "acordos_br", "tx_cpc_unico_acordo_br", "valor_negociado_br"],
+            title="Conversão CPC único → acordo por negociador",
         )
     with c2:
         cpc_pag_chart = display_fields(cpc_df[cpc_df["cpcs_unicos"] > 0].sort_values("tx_cpc_unico_pagamento", ascending=False).head(15))
@@ -1913,8 +2005,8 @@ with tabs[2]:
             cpc_pag_chart,
             x=alt.X("tx_cpc_unico_pagamento:Q", axis=alt.Axis(format="%")),
             y="OPERADOR:N",
-            tooltip=["OPERADOR", "cpcs_br", "cpcs_unicos_br", "pagamentos_br", "tx_cpc_unico_pagamento_br", "valor_pago_br"],
-            title="Conversão CPC único -> pagamento por negociador",
+            tooltip=["OPERADOR", "cpcs_unicos_br", "pagamentos_br", "tx_cpc_unico_pagamento_br", "valor_pago_br"],
+            title="Conversão CPC único → pagamento por negociador",
         )
 
     c1, c2 = st.columns(2)
@@ -1934,45 +2026,232 @@ with tabs[2]:
             title="Acordos convertidos sem pagamento",
         )
     with c2:
-        cpc_scatter = display_fields(cpc_df[(cpc_df["cpcs_unicos"] > 0) & (cpc_df["acordos"] > 0)])
+        cpc_scatter = display_fields(cpc_df[cpc_df["cpcs_unicos"] > 0])
         scatter = (
             alt.Chart(cpc_scatter)
             .mark_circle(size=130, opacity=0.78)
             .encode(
-                x=alt.X("tx_cpc_unico_acordo:Q", title="CPC único -> acordo", axis=alt.Axis(format="%")),
-                y=alt.Y("tx_acordo_pagamento:Q", title="Acordo -> pagamento", axis=alt.Axis(format="%")),
+                x=alt.X("tx_cpc_unico_acordo:Q", title="CPC único → acordo", axis=alt.Axis(format="%")),
+                y=alt.Y("tx_cpc_unico_pagamento:Q", title="CPC único → pagamento", axis=alt.Axis(format="%")),
                 size=alt.Size("valor_pago:Q", title="Valor recebido"),
-                color=alt.Color("acordos_sem_pagamento:Q", scale=alt.Scale(scheme="orangered"), title="Sem pagamento"),
+                color=alt.Color("quartil_cpc_acordo:N", title="Quartil"),
                 tooltip=[
                     "OPERADOR",
-                    "cpcs_br",
                     "cpcs_unicos_br",
                     "acordos_br",
                     "pagamentos_br",
                     "acordos_sem_pagamento_br",
                     "tx_cpc_unico_acordo_br",
-                    "tx_acordo_pagamento_br",
+                    "tx_cpc_unico_pagamento_br",
+                    "efetividade_pagamento_br",
                     "valor_pago_br",
+                    "quartil_cpc_acordo",
                 ],
             )
-            .properties(height=320, title="Qualidade da conversão")
+            .properties(height=320, title="Qualidade da conversão (CPC único → acordo × CPC único → pagamento)")
         )
         st.altair_chart(scatter, use_container_width=True)
+
+    st.subheader("Quartil de conversão CPC")
+    st.caption("Classificação pelo percentual de CPCs únicos que resultaram em pagamento. Mínimo de 3 CPCs únicos para entrar no ranking.")
+
+    diagnostico_cpc_resumo = cpc_df["diagnostico_cpc"].value_counts().reset_index()
+    diagnostico_cpc_resumo.columns = ["Diagnóstico", "Operadores"]
+    c1, c2 = st.columns([1, 1.3])
+    with c1:
+        st.subheader("Resumo por diagnóstico")
+        st.dataframe(diagnostico_cpc_resumo, use_container_width=True, hide_index=True)
+    with c2:
+        chart_cpc_quartil = display_fields(
+            cpc_df[cpc_df["cpcs_unicos"] >= 3]
+            .sort_values("tx_cpc_unico_pagamento", ascending=False)
+            .head(15)
+        )
+        bar_chart(
+            chart_cpc_quartil,
+            x=alt.X("tx_cpc_unico_pagamento:Q", axis=alt.Axis(format="%")),
+            y="OPERADOR:N",
+            color="diagnostico_cpc:N",
+            tooltip=[
+                "OPERADOR",
+                "cpcs_unicos_br",
+                "tx_cpc_unico_acordo_br",
+                "tx_cpc_unico_pagamento_br",
+                "efetividade_pagamento_br",
+                "valor_pago_br",
+                "diagnostico_cpc",
+            ],
+            title="Conversão CPC único → pagamento por diagnóstico",
+            height=360,
+        )
+
+    st.subheader("Operadores em cada quartil")
+    grupos_cpc = cpc_operator_groups(cpc_df)
+    st.dataframe(
+        grupos_cpc,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Métrica": st.column_config.TextColumn("Métrica", help="Indicador usado para montar o quartil."),
+            "Grupo": st.column_config.TextColumn("Grupo", help="Grupo do quartil. Q4 é destaque; Q1 é crítico."),
+            "Qtd. operadores": st.column_config.NumberColumn("Qtd. operadores"),
+            "Operadores": st.column_config.TextColumn("Operadores"),
+        },
+    )
+
+    st.subheader("Análise descritiva por quartil")
+    st.caption("Médias calculadas sobre os operadores com pelo menos 3 CPCs únicos dentro do quartil. Totais são a soma consolidada de todos os operadores do grupo.")
+    desc_df = cpc_quartil_descritivo(cpc_df)
+    if not desc_df.empty:
+        st.dataframe(desc_df, use_container_width=True, hide_index=True)
+
+        _descricoes_quartil = {
+            "Q4 - destaque": "Representam o padrão de excelência do grupo. Vale mapear as boas práticas desses operadores para disseminar à equipe.",
+            "Q3 - bom": "Acima da mediana; com foco na qualidade da negociação e acompanhamento do funil pós-CPC têm potencial para alcançar o grupo destaque.",
+            "Q2 - atenção": "Abaixo da mediana. Recomenda-se analisar as perdas entre CPC e fechamento de acordo: script de abordagem, timing de retorno e perfil da carteira trabalhada.",
+            "Q1 - crítico": "Conversão crítica. Necessita acompanhamento gerencial individualizado, capacitação direcionada e revisão da estratégia de negociação.",
+            "Sem base": "Menos de 3 CPCs únicos no período filtrado; sem base estatística para classificação no ranking.",
+        }
+        for _, row in desc_df.iterrows():
+            grupo = row["Quartil"]
+            ops = int(row["Qtd. operadores"])
+            pag_media = row["CPC → pgto (média)"]
+            descricao = _descricoes_quartil.get(grupo, "")
+            if "Sem base" in grupo:
+                st.markdown(f"**{grupo}** — {ops} operador(es). {descricao}")
+            else:
+                st.markdown(f"**{grupo}** ({ops} operador(es)) — média CPC → pagamento: **{pag_media}**. {descricao}")
+
+    st.subheader("Quartil de volume CPC")
+    st.caption("Classificação pela quantidade de CPCs únicos gerados no período. Mínimo de 1 CPC único para entrar no ranking.")
+
+    _vq4 = cpc_df[cpc_df["quartil_cpc_volume"].eq("Q4 - destaque")]
+    _vq3 = cpc_df[cpc_df["quartil_cpc_volume"].eq("Q3 - bom")]
+    _vq2 = cpc_df[cpc_df["quartil_cpc_volume"].eq("Q2 - atenção")]
+    _vq1 = cpc_df[cpc_df["quartil_cpc_volume"].eq("Q1 - crítico")]
+    _vsb = cpc_df[cpc_df["quartil_cpc_volume"].eq("Sem base")]
+    _vbase = cpc_df[cpc_df["cpcs_unicos"] >= 1]
+
+    kv1, kv2, kv3, kv4, kv5, kv6 = st.columns(6)
+    with kv1:
+        metric_card("Ranqueados", num_fmt(len(cpc_df) - len(_vsb)))
+    with kv2:
+        metric_card("Q4 — Destaque", num_fmt(len(_vq4)))
+    with kv3:
+        metric_card("Q3 — Bom", num_fmt(len(_vq3)))
+    with kv4:
+        metric_card("Q2 — Atenção", num_fmt(len(_vq2)))
+    with kv5:
+        metric_card("Q1 — Crítico", num_fmt(len(_vq1)))
+    with kv6:
+        metric_card("Sem base", num_fmt(len(_vsb)))
+
+    kv7, kv8, kv9, kv10 = st.columns(4)
+    with kv7:
+        metric_card("CPCs únicos (total)", num_fmt(cpc_df["cpcs_unicos"].sum()))
+    with kv8:
+        _media_geral = _vbase["cpcs_unicos"].mean() if not _vbase.empty else float("nan")
+        metric_card("Média geral CPCs únicos", num_fmt(_media_geral) if not pd.isna(_media_geral) else "—")
+    with kv9:
+        _media_q4 = _vq4["cpcs_unicos"].mean() if not _vq4.empty else float("nan")
+        metric_card("Média CPCs únicos (Q4)", num_fmt(_media_q4) if not pd.isna(_media_q4) else "—")
+    with kv10:
+        metric_card("Valor recebido (Q4)", money_fmt(_vq4["valor_pago"].sum()))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        chart_cpc_vol = display_fields(
+            cpc_df[cpc_df["cpcs_unicos"] >= 1]
+            .sort_values("cpcs_unicos", ascending=False)
+            .head(15)
+        )
+        bar_chart(
+            chart_cpc_vol,
+            x=alt.X("cpcs_unicos:Q"),
+            y="OPERADOR:N",
+            color="quartil_cpc_volume:N",
+            tooltip=[
+                "OPERADOR",
+                "cpcs_unicos_br",
+                "acordos_br",
+                "pagamentos_br",
+                "tx_cpc_unico_acordo_br",
+                "tx_cpc_unico_pagamento_br",
+                "valor_pago_br",
+                "quartil_cpc_volume",
+            ],
+            title="Volume de CPCs únicos por operador (top 15)",
+            height=360,
+        )
+    with c2:
+        _scatter_vol = display_fields(cpc_df[cpc_df["cpcs_unicos"] >= 1])
+        if not _scatter_vol.empty:
+            scatter_vol_chart = (
+                alt.Chart(_scatter_vol)
+                .mark_circle(size=90, opacity=0.85)
+                .encode(
+                    x=alt.X("cpcs_unicos:Q", title="CPCs únicos"),
+                    y=alt.Y("valor_pago:Q", title="Valor recebido (R$)"),
+                    color=alt.Color("quartil_cpc_volume:N", title="Quartil"),
+                    tooltip=[
+                        "OPERADOR",
+                        "cpcs_unicos_br",
+                        "valor_pago_br",
+                        "acordos_br",
+                        "pagamentos_br",
+                        "tx_cpc_unico_pagamento_br",
+                        "quartil_cpc_volume",
+                    ],
+                )
+                .properties(height=360, title="CPCs únicos × Valor recebido por quartil")
+            )
+            st.altair_chart(scatter_vol_chart, use_container_width=True)
+        else:
+            st.info("Sem dados para o gráfico de dispersão.")
+
+    vol_resumo = (
+        cpc_df["quartil_cpc_volume"]
+        .value_counts()
+        .reindex(["Q4 - destaque", "Q3 - bom", "Q2 - atenção", "Q1 - crítico", "Sem base"])
+        .dropna()
+        .reset_index()
+    )
+    vol_resumo.columns = ["Quartil", "Operadores"]
+    st.dataframe(vol_resumo, use_container_width=True, hide_index=True)
+
+    st.subheader("Análise descritiva por volume de CPC")
+    st.caption("Médias e totais calculados sobre os operadores de cada quartil com ao menos 1 CPC único.")
+    desc_vol_df = cpc_volume_quartil_descritivo(cpc_df)
+    if not desc_vol_df.empty:
+        st.dataframe(desc_vol_df, use_container_width=True, hide_index=True)
+
+        _descricoes_volume_quartil = {
+            "Q4 - destaque": "Alta produtividade de contato produtivo; esses operadores lideram em volume de CPCs únicos. Vale mapear a abordagem e cadência de acionamento desse grupo para disseminar à equipe.",
+            "Q3 - bom": "Volume acima da mediana; bom ritmo de contatos produtivos. Com incremento na frequência de follow-up há espaço para alcançar o grupo destaque.",
+            "Q2 - atenção": "Volume abaixo da mediana. Recomenda-se revisar a gestão da carteira ativa e a frequência de acionamentos para ampliar o número de contatos produtivos.",
+            "Q1 - crítico": "Volume crítico de CPCs únicos. Necessita acompanhamento gerencial para identificar bloqueios operacionais: carteira insuficiente, ausências ou baixa eficiência nos acionamentos.",
+            "Sem base": "Sem CPCs únicos no período filtrado; operadores sem contatos produtivos registrados.",
+        }
+        for _, row in desc_vol_df.iterrows():
+            grupo = row["Quartil"]
+            ops = int(row["Qtd. operadores"])
+            media_cpc = row["CPCs únicos (média)"]
+            descricao = _descricoes_volume_quartil.get(grupo, "")
+            if "Sem base" in grupo:
+                st.markdown(f"**{grupo}** — {ops} operador(es). {descricao}")
+            else:
+                st.markdown(f"**{grupo}** ({ops} operador(es)) — média CPCs únicos: **{media_cpc}**. {descricao}")
 
     st.subheader("Tabela analítica CPC")
     cpc_cols = [
         "OPERADOR",
-        "cpcs",
         "cpcs_unicos",
-        "clientes_cpc",
         "acordos",
         "pagamentos",
         "acordos_sem_pagamento",
         "acordos_em_aberto",
         "acordos_nao_pagou",
         "pct_quebra",
-        "tx_cpc_acordo",
-        "tx_cpc_pagamento",
         "tx_cpc_unico_acordo",
         "tx_cpc_unico_pagamento",
         "tx_acordo_pagamento",
@@ -1985,6 +2264,10 @@ with tabs[2]:
         "valor_quebra",
         "ticket_medio",
         "recuperacao",
+        "quartil_cpc_volume",
+        "quartil_cpc_acordo",
+        "quartil_cpc_pagamento",
+        "diagnostico_cpc",
     ]
     data_table(cpc_df[cpc_cols])
 
@@ -1994,6 +2277,30 @@ with tabs[3]:
     faixa_df = faixa_df.merge(ev_faixa, on="FAIXA_ATRASO", how="outer").fillna(0)
     faixa_df["tx_contato"] = safe_div(faixa_df["contatos_efetivos"], faixa_df["acionamentos"])
     faixa_chart = display_fields(faixa_df)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    _f_faixas_ativas = int(faixa_df[faixa_df["acordos"] > 0]["FAIXA_ATRASO"].nunique())
+    _f_acordos_total = int(faixa_df["acordos"].sum())
+    _f_pago_total = faixa_df["valor_pago"].sum()
+    _f_pag_sum = float(faixa_df["pagamentos"].sum())
+    _f_npag_sum = float(faixa_df["acordos_nao_pagou"].sum())
+    _f_efetividade = _f_pag_sum / (_f_pag_sum + _f_npag_sum) if (_f_pag_sum + _f_npag_sum) > 0 else 0
+    _f_melhor = str(faixa_df.sort_values("valor_pago", ascending=False).iloc[0]["FAIXA_ATRASO"]) if not faixa_df.empty else "-"
+    _f_maior_volume = str(faixa_df.sort_values("acordos", ascending=False).iloc[0]["FAIXA_ATRASO"]) if not faixa_df.empty else "-"
+
+    kf1, kf2, kf3, kf4, kf5 = st.columns(5)
+    with kf1:
+        metric_card("Faixas com acordos", num_fmt(_f_faixas_ativas))
+    with kf2:
+        metric_card("Total de acordos", num_fmt(_f_acordos_total))
+    with kf3:
+        metric_card("Valor total recebido", money_fmt(_f_pago_total))
+    with kf4:
+        metric_card("Efetividade de pagamento", pct_fmt(_f_efetividade))
+    with kf5:
+        metric_card("Faixa líder (valor)", _f_melhor)
+
+    st.markdown("---")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -2011,7 +2318,27 @@ with tabs[3]:
             x=alt.X("tx_pagamento:Q", axis=alt.Axis(format="%")),
             y="FAIXA_ATRASO:N",
             tooltip=["FAIXA_ATRASO", "tx_pagamento_br", "acordos_br", "pagamentos_br", "recuperacao_br"],
-            title="Conversão acordo/pagamento por faixa",
+            title="Conversão acordo → pagamento por faixa",
+            sort=None,
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        bar_chart(
+            faixa_chart,
+            x="ticket_medio:Q",
+            y="FAIXA_ATRASO:N",
+            tooltip=["FAIXA_ATRASO", "ticket_medio_br", "acordos_br", "valor_negociado_br"],
+            title="Ticket médio por faixa",
+            sort=None,
+        )
+    with c4:
+        bar_chart(
+            faixa_chart,
+            x=alt.X("efetividade_pagamento:Q", axis=alt.Axis(format="%")),
+            y="FAIXA_ATRASO:N",
+            tooltip=["FAIXA_ATRASO", "efetividade_pagamento_br", "pagamentos_br", "acordos_nao_pagou_br", "valor_quebra_br"],
+            title="Efetividade de pagamento por faixa",
             sort=None,
         )
 
@@ -2052,6 +2379,28 @@ with tabs[4]:
     segmento_df = segmento_df.sort_values("SEGMENTO_DPD")
     segmento_chart = display_fields(segmento_df)
 
+    # ── KPIs por segmento ────────────────────────────────────────────────────
+    def _seg(col, seg):
+        row = segmento_df[segmento_df["SEGMENTO_DPD"].astype(str).eq(seg)]
+        return row[col].iloc[0] if not row.empty else 0
+
+    ks1, ks2, ks3, ks4, ks5 = st.columns(5)
+    with ks1:
+        metric_card("POTLOSS — Recebido", money_fmt(_seg("valor_pago", "POTLOSS")))
+    with ks2:
+        metric_card("SALVAGE — Recebido", money_fmt(_seg("valor_pago", "SALVAGE")))
+    with ks3:
+        metric_card("SALVAGE+ — Recebido", money_fmt(_seg("valor_pago", "SALVAGE +")))
+    with ks4:
+        _dpd_pag = float(segmento_df["pagamentos"].sum())
+        _dpd_npag = float(segmento_df["acordos_nao_pagou"].sum())
+        metric_card("Efetividade geral DPD", pct_fmt(_dpd_pag / (_dpd_pag + _dpd_npag) if (_dpd_pag + _dpd_npag) else 0))
+    with ks5:
+        _dpd_melhor = segmento_df.sort_values("recuperacao", ascending=False).iloc[0]["SEGMENTO_DPD"] if not segmento_df.empty else "-"
+        metric_card("Melhor % recuperação", str(_dpd_melhor))
+
+    st.markdown("---")
+
     c1, c2 = st.columns(2)
     with c1:
         bar_chart(
@@ -2068,7 +2417,27 @@ with tabs[4]:
             x=alt.X("tx_pagamento:Q", axis=alt.Axis(format="%")),
             y="SEGMENTO_DPD:N",
             tooltip=["SEGMENTO_DPD", "tx_pagamento_br", "acordos_br", "pagamentos_br", "tx_contato_br"],
-            title="Conversão acordo/pagamento por segmento DPD",
+            title="Conversão acordo → pagamento por segmento DPD",
+            sort=segmento_order,
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        bar_chart(
+            segmento_chart,
+            x="ticket_medio:Q",
+            y="SEGMENTO_DPD:N",
+            tooltip=["SEGMENTO_DPD", "ticket_medio_br", "acordos_br", "valor_negociado_br"],
+            title="Ticket médio por segmento DPD",
+            sort=segmento_order,
+        )
+    with c4:
+        bar_chart(
+            segmento_chart,
+            x=alt.X("efetividade_pagamento:Q", axis=alt.Axis(format="%")),
+            y="SEGMENTO_DPD:N",
+            tooltip=["SEGMENTO_DPD", "efetividade_pagamento_br", "pagamentos_br", "acordos_nao_pagou_br"],
+            title="Efetividade de pagamento por segmento DPD",
             sort=segmento_order,
         )
 
@@ -2102,6 +2471,29 @@ with tabs[4]:
 with tabs[5]:
     regiao_df = aggregate_resultados(resultados, "REGIÃO").sort_values("valor_pago", ascending=False)
     regiao_chart = display_fields(regiao_df)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    _r_total_regioes = int(regiao_df[regiao_df["acordos"] > 0]["REGIÃO"].nunique())
+    _r_pago_total = regiao_df["valor_pago"].sum()
+    _r_top_reg = str(regiao_df.iloc[0]["REGIÃO"]) if not regiao_df.empty else "-"
+    _r_top_pago = regiao_df.iloc[0]["valor_pago"] if not regiao_df.empty else 0
+    _r_top3_pct = regiao_df.head(3)["valor_pago"].sum() / _r_pago_total if _r_pago_total else 0
+    _r_rec_media = float(regiao_df["recuperacao"].mean()) if not regiao_df.empty else 0
+
+    kr1, kr2, kr3, kr4, kr5 = st.columns(5)
+    with kr1:
+        metric_card("Regiões com acordos", num_fmt(_r_total_regioes))
+    with kr2:
+        metric_card("Região líder", _r_top_reg)
+    with kr3:
+        metric_card("Valor recebido (líder)", money_fmt(_r_top_pago))
+    with kr4:
+        metric_card("Concentração top 3", pct_fmt(_r_top3_pct))
+    with kr5:
+        metric_card("% recuperação média", pct_fmt(_r_rec_media))
+
+    st.markdown("---")
+
     c1, c2 = st.columns(2)
     with c1:
         bar_chart(
@@ -2117,7 +2509,25 @@ with tabs[5]:
             x=alt.X("recuperacao:Q", axis=alt.Axis(format="%")),
             y="REGIÃO:N",
             tooltip=["REGIÃO", "recuperacao_br", "valor_pago_br", "valor_negociado_br"],
-            title="Recuperação por região",
+            title="% Recuperação por região",
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        bar_chart(
+            regiao_chart,
+            x="acordos:Q",
+            y="REGIÃO:N",
+            tooltip=["REGIÃO", "acordos_br", "pagamentos_br", "clientes_br"],
+            title="Acordos por região",
+        )
+    with c4:
+        bar_chart(
+            regiao_chart,
+            x="ticket_medio:Q",
+            y="REGIÃO:N",
+            tooltip=["REGIÃO", "ticket_medio_br", "acordos_br", "valor_negociado_br"],
+            title="Ticket médio por região",
         )
 
     best_regiao = (
@@ -2165,6 +2575,26 @@ with tabs[6]:
     matrix["pct_quebra"] = safe_div(matrix["valor_quebra"], matrix["meta_individual"])
     matrix["recuperacao"] = safe_div(matrix["valor_pago"], matrix["valor_negociado"])
 
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    _mx_combos = int(matrix[matrix["acordos"] > 0][["OPERADOR", "FAIXA_ATRASO"]].drop_duplicates().shape[0])
+    _mx_pago_total = matrix["valor_pago"].sum()
+    _mx_top5_pct = matrix.sort_values("valor_pago", ascending=False).head(5)["valor_pago"].sum() / _mx_pago_total if _mx_pago_total else 0
+    _mx_top_row = matrix.sort_values("valor_pago", ascending=False).iloc[0] if not matrix.empty else None
+    _mx_top_label = f"{_mx_top_row['OPERADOR']} / {_mx_top_row['FAIXA_ATRASO']}" if _mx_top_row is not None else "-"
+    _mx_top_valor = float(_mx_top_row["valor_pago"]) if _mx_top_row is not None else 0
+
+    km1, km2, km3, km4 = st.columns(4)
+    with km1:
+        metric_card("Combinações ativas", num_fmt(_mx_combos))
+    with km2:
+        metric_card("Maior combinação", str(_mx_top_label))
+    with km3:
+        metric_card("Valor (maior combinação)", money_fmt(_mx_top_valor))
+    with km4:
+        metric_card("Concentração top 5", pct_fmt(_mx_top5_pct))
+
+    st.markdown("---")
+
     metric_choice = st.selectbox(
         "Métrica da matriz",
         ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "tx_pagamento", "efetividade_pagamento", "pct_quebra", "recuperacao", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"],
@@ -2174,6 +2604,19 @@ with tabs[6]:
         {metric_choice: "sum" if metric_choice in ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"] else "mean"}
     ).reset_index()
     heatmap(display_fields(heat_data), "FAIXA_ATRASO:N", "OPERADOR:N", f"{metric_choice}:Q", "Operador x faixa de atraso")
+
+    st.subheader("Top 10 combinações Operador × Faixa")
+    top_combos = matrix.sort_values("valor_pago", ascending=False).head(10).copy()
+    top_combos["combo"] = top_combos["OPERADOR"].astype(str) + " / " + top_combos["FAIXA_ATRASO"].astype(str)
+    top_combos_chart = display_fields(top_combos)
+    bar_chart(
+        top_combos_chart,
+        x="valor_pago:Q",
+        y=alt.Y("combo:N", sort="-x", title=None),
+        tooltip=["combo", "valor_pago_br", "acordos_br", "pagamentos_br", "tx_pagamento_br", "recuperacao_br"],
+        title="Top 10 combinações por valor recebido",
+        height=320,
+    )
 
     st.subheader("Matriz analítica por operador, faixa e região")
     data_table(matrix.sort_values(["valor_pago", "pagamentos"], ascending=False))
@@ -2533,16 +2976,88 @@ with tabs[9]:
     segmentos_oportunidade = aggregate_resultados(resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")], "SEGMENTO_DPD")
     segmentos_oportunidade = segmentos_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Operadores para priorização")
-    data_table(destaques[["OPERADOR", "score", "valor_pago", "tx_pagamento", "efetividade_pagamento", "recuperacao", "clientes_trabalhados"]].head(10))
-    with c2:
-        st.subheader("Alto volume com eficiência abaixo da média")
-        data_table(oportunidades[["OPERADOR", "score", "acionamentos", "tx_contato", "tx_acordo", "valor_pago"]].head(10))
+    # ── KPIs de alerta ──────────────────────────────────────────────────────
+    _i_destaques = len(destaques)
+    _i_oportunidades = len(oportunidades)
+    _i_valor_risco = resultados["VALOR_NAO_PAGOU"].sum()
+    _i_valor_aberto = resultados["VALOR_EM_ABERTO"].sum()
 
-    st.subheader("Faixas com maior oportunidade de recuperação")
+    ki1, ki2, ki3, ki4 = st.columns(4)
+    with ki1:
+        metric_card("Operadores em destaque", num_fmt(_i_destaques), "Score ≥ percentil 75% da equipe")
+    with ki2:
+        metric_card("Oportunidade de melhoria", num_fmt(_i_oportunidades), "Alto volume de acionamento, score abaixo da média")
+    with ki3:
+        metric_card("Valor em risco (não pago)", money_fmt(_i_valor_risco), "Acordos com status Não Pagou — quebra de contrato")
+    with ki4:
+        metric_card("Potencial recuperável (aberto)", money_fmt(_i_valor_aberto), "Acordos em aberto — ainda podem ser convertidos")
+
+    st.markdown("---")
+
+    # ── Seção 1: Operadores em destaque ─────────────────────────────────────
+    st.subheader("Operadores em destaque")
+    st.caption("Score no percentil 75% ou acima. São as referências de produtividade e eficiência da equipe — candidatos a mentores e benchmarks internos.")
+    if not destaques.empty:
+        ci1, ci2 = st.columns([1.3, 1])
+        with ci1:
+            dest_chart = display_fields(destaques.head(10))
+            bar_chart(
+                dest_chart,
+                x=alt.X("score:Q", axis=alt.Axis(format="%")),
+                y=alt.Y("OPERADOR:N", sort="-x", title=None),
+                tooltip=["OPERADOR", "score_br", "valor_pago_br", "tx_pagamento_br", "efetividade_pagamento_br", "recuperacao_br"],
+                title="Score dos operadores em destaque",
+                height=300,
+            )
+        with ci2:
+            data_table(destaques[["OPERADOR", "score", "valor_pago", "tx_pagamento", "efetividade_pagamento", "recuperacao", "clientes_trabalhados"]].head(10))
+
+    # ── Seção 2: Operadores com oportunidade ────────────────────────────────
+    st.subheader("Alto volume com eficiência abaixo da média")
+    st.caption("Operadores com volume de acionamentos ≥ mediana da equipe, mas score abaixo da média. Têm carteira ativa mas precisam melhorar conversão — foco prioritário de coaching.")
+    if not oportunidades.empty:
+        ci3, ci4 = st.columns([1.3, 1])
+        with ci3:
+            op_chart = display_fields(oportunidades.head(10))
+            bar_chart(
+                op_chart,
+                x="acionamentos:Q",
+                y=alt.Y("OPERADOR:N", sort="-x", title=None),
+                tooltip=["OPERADOR", "acionamentos_br", "score_br", "tx_acordo_br", "tx_pagamento_br", "valor_pago_br"],
+                title="Volume de acionamentos (oportunidade de conversão)",
+                height=300,
+            )
+        with ci4:
+            data_table(oportunidades[["OPERADOR", "score", "acionamentos", "tx_contato", "tx_acordo", "valor_pago"]].head(10))
+
+    st.markdown("---")
+
+    # ── Seção 3: Mapa de oportunidades por faixa ────────────────────────────
+    st.subheader("Mapa de oportunidades por faixa de atraso")
+    st.caption("Faixas ordenadas por maior carteira negociada com menor recuperação proporcional. Onde há mais valor em disputa e menor aproveitamento — ação imediata gera maior retorno.")
+    ci5, ci6 = st.columns(2)
+    with ci5:
+        fo_chart = display_fields(faixas_oportunidade)
+        bar_chart(
+            fo_chart,
+            x="valor_negociado:Q",
+            y=alt.Y("FAIXA_ATRASO:N", sort="-x", title=None),
+            tooltip=["FAIXA_ATRASO", "valor_negociado_br", "valor_pago_br", "recuperacao_br", "acordos_br"],
+            title="Carteira negociada por faixa",
+            sort=None,
+        )
+    with ci6:
+        bar_chart(
+            fo_chart,
+            x=alt.X("recuperacao:Q", axis=alt.Axis(format="%")),
+            y=alt.Y("FAIXA_ATRASO:N", sort="-x", title=None),
+            tooltip=["FAIXA_ATRASO", "recuperacao_br", "valor_pago_br", "valor_negociado_br", "efetividade_pagamento_br"],
+            title="% Recuperação por faixa",
+            sort=None,
+        )
     data_table(faixas_oportunidade[["FAIXA_ATRASO", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
 
-    st.subheader("Segmentos DPD com maior oportunidade de recuperação")
+    # ── Seção 4: Oportunidade por segmento DPD ──────────────────────────────
+    st.subheader("Oportunidade por segmento DPD")
+    st.caption("POTLOSS: dívidas recentes, maior liquidez e probabilidade de acordo. SALVAGE e SALVAGE+: dívidas antigas, maior desconto necessário mas ticket potencialmente alto.")
     data_table(segmentos_oportunidade[["SEGMENTO_DPD", "clientes", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
