@@ -833,10 +833,14 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
 
 @st.cache_data(show_spinner=False)
 def load_data(data_version):
-    eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos")
+    eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos", usecols=[0, 4, 7, 8, 11])
     clientes_file = latest_file("Pesquisa-Cliente-908-*.xlsx")
-    contratos = pd.read_excel(clientes_file, sheet_name="Contratos")
-    resultados = pd.read_excel(RESULTADOS_FILE, sheet_name="BASE", usecols="A:Z")
+    contratos = pd.read_excel(clientes_file, sheet_name="Contratos", usecols=[5, 6, 7, 8, 9, 14, 18])
+    resultados = pd.read_excel(
+        RESULTADOS_FILE,
+        sheet_name="BASE",
+        usecols=[0, 1, 5, 7, 8, 9, 11, 12, 15, 16, 19, 20, 22, 24, 25],
+    )
 
     eventos.columns = [normalize_text(c).upper() for c in eventos.columns]
     contratos.columns = [normalize_text(c).upper() for c in contratos.columns]
@@ -852,7 +856,6 @@ def load_data(data_version):
     eventos["DATA"] = pd.to_datetime(eventos["DATA"], dayfirst=True, errors="coerce")
     eventos["EVENTO_TXT"] = eventos["EVENTO"].map(normalize_text)
     eventos["EVENTO_UPPER"] = eventos["EVENTO_TXT"].str.upper()
-    eventos["DESCRICAO_UPPER"] = eventos["DESCRIÇÃO"].map(normalize_text).str.upper()
     eventos["TIPO DE ACIONAMENTO"] = eventos["TIPO DE ACIONAMENTO"].map(normalize_text)
 
     contratos["CONTRATO_KEY"] = contratos["CONTRATO"].map(normalize_contract)
@@ -891,14 +894,12 @@ def load_data(data_version):
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
-    resultados["HONORARIOS"] = pd.to_numeric(resultados["HONORÁRIOS %"], errors="coerce").fillna(0)
     resultados["DPD"] = pd.to_numeric(resultados["DPD"], errors="coerce")
     resultados["FAIXA_ATRASO"] = resultados["DPD"].map(atraso_faixa)
     resultados["SEGMENTO_DPD"] = resultados["DPD FORMULA"].map(segmento_dpd)
     resultados["REGIÃO"] = resultados["REGIÃO"].fillna(resultados.get("UF", "Sem região")).map(normalize_text)
     resultados["UF"] = resultados["UF"].map(normalize_text)
     resultados["CAMPANHA"] = resultados["CAMPANHA"].map(normalize_text)
-    resultados["TIPO DE ACORDO"] = resultados["TIPO DE ACORDO"].map(normalize_text)
     resultados["STATUS"] = resultados["STATUS"].map(normalize_text).str.upper()
     resultados["STATUS_KEY"] = resultados["STATUS"].map(normalize_status)
     resultados["IS_ACORDO"] = resultados["CONTRATO_KEY"].notna() & resultados["OPERADOR"].notna()
