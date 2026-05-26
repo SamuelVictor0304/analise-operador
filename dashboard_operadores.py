@@ -153,7 +153,7 @@ FIELD_HELP = {
     "acordos": ("Acordos", "Quantidade de acordos localizados na base de resultados."),
     "pagamentos": ("Pagamentos", "Acordos com status PAGOU ou data de pagamento preenchida."),
     "acordos_sem_pagamento": ("Acordos sem pagamento", "Acordos sem status pago e sem data de pagamento."),
-    "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO ou status vazio sem data de pagamento."),
+    "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO na base de resultados."),
     "acordos_nao_pagou": ("Acordos não pagos", "Acordos com status NÃO PAGOU na base de resultados."),
     "pct_quebra": ("% quebras", "Impacto financeiro das quebras na meta: valor dos acordos não pagos dividido pela meta aplicável."),
     "tx_contato": ("Taxa de CPC", "CPCs divididos pelo total de acionamentos."),
@@ -171,7 +171,7 @@ FIELD_HELP = {
     "tx_acordo_sem_pagamento": ("Taxa acordo sem pagamento", "Acordos sem pagamento divididos pelos acordos originados em contratos com CPC."),
     "valor_negociado": ("Valor negociado", "Soma da coluna VALOR DO BANCO - META da base de resultados."),
     "valor_pago": ("Valor recebido", "Valor negociado dos acordos pagos; acordos não pagos entram como R$ 0,00."),
-    "valor_em_aberto": ("Valor em aberto", "Valor negociado dos acordos com status EM ABERTO ou status vazio sem data de pagamento."),
+    "valor_em_aberto": ("Valor em aberto", "Valor negociado dos acordos com status EM ABERTO na base de resultados."),
     "valor_nao_pagou": ("Valor não pago", "Valor negociado dos acordos com status NÃO PAGOU."),
     "valor_quebra": ("Valor quebras", "Valor negociado dos acordos não pagos."),
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
@@ -902,9 +902,7 @@ def load_data(data_version):
     resultados["STATUS"] = resultados["STATUS"].map(normalize_text).str.upper()
     resultados["STATUS_KEY"] = resultados["STATUS"].map(normalize_status)
     resultados["IS_ACORDO"] = resultados["CONTRATO_KEY"].notna() & resultados["OPERADOR"].notna()
-    resultados["IS_EM_ABERTO"] = resultados["STATUS_KEY"].eq("EM ABERTO") | (
-        resultados["STATUS_KEY"].eq("") & resultados["DATA_PAGAMENTO"].isna()
-    )
+    resultados["IS_EM_ABERTO"] = resultados["STATUS_KEY"].eq("EM ABERTO")
     resultados["IS_NAO_PAGOU"] = resultados["STATUS_KEY"].eq("NAO PAGOU")
     resultados["IS_PAGO"] = resultados["STATUS_KEY"].eq("PAGOU") | (resultados["DATA_PAGAMENTO"].notna())
     resultados["VALOR_PAGO"] = np.where(resultados["IS_PAGO"], resultados["VALOR_NEGOCIADO"], 0)
