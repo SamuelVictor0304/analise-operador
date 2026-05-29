@@ -20,8 +20,7 @@ EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
 DEFAULT_OPERATOR_GOAL = 150000
 POST_REPOSSESSED_GOAL = 730000
-REMAINING_OFFICE_GOAL = 750000
-MONTHLY_OFFICE_GOAL = POST_REPOSSESSED_GOAL + REMAINING_OFFICE_GOAL
+MONTHLY_OFFICE_GOAL = 1480000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro"}
 POSTGRES_DEFAULTS = {
@@ -2630,7 +2629,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina voltou ao padrão; Victor Lima concentra a meta de pós retomado de R$ 730.000. Meta geral mensal: R$ 1.480.000 (R$ 730.000 pós retomado + R$ 750.000 restante). Luiz Mauro fica fora da análise de metas por enquanto.")
+    st.caption("Meta mensal: R$ 150.000 por negociador. A meta geral mensal é R$ 1.480.000 e já considera o pós retomado. Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado. Ana Karolina voltou ao padrão e Luiz Mauro fica fora da análise de metas por enquanto.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
