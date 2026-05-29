@@ -834,15 +834,16 @@ def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     df["pct_aberto_meta_individual"] = safe_div(df["valor_em_aberto"], df["meta_individual"])
     df["saldo_meta_individual"] = df["valor_pago"] - df["meta_individual"]
     df["participacao_meta_geral"] = safe_div(df["valor_pago"], df["meta_geral_escritorio"])
-    df["quartil_meta_individual"] = quartile_label(df["atingimento_meta_individual"], min_series=df["meta_individual"], min_value=1)
-    df["quartil_meta_geral"] = quartile_label(df["participacao_meta_geral"], min_series=df["meta_individual"], min_value=1)
+    df["quartil_meta_individual"] = quartile_label(df["atingimento_meta_individual"], min_series=df["valor_pago"], min_value=0.01)
+    df["quartil_meta_geral"] = quartile_label(df["participacao_meta_geral"], min_series=df["valor_pago"], min_value=0.01)
     df["diagnostico_meta"] = np.select(
         [
+            df["valor_pago"] <= 0,
             df["atingimento_meta_individual"] >= 1,
             df["atingimento_meta_individual"] >= 0.75,
             df["atingimento_meta_individual"] >= 0.50,
         ],
-        ["Meta batida", "Próximo da meta", "Atenção"],
+        ["Sem recebimento", "Meta batida", "Próximo da meta", "Atenção"],
         default="Crítico",
     )
     return df.sort_values(["atingimento_meta_individual", "valor_pago"], ascending=False), meses, meta_geral
