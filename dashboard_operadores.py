@@ -19,7 +19,11 @@ COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
 DEFAULT_OPERATOR_GOAL = 150000
-DOUBLE_GOAL_OPERATORS = {"ana.karolina.oliveira", "luiz.mauro"}
+POST_REPOSSESSED_GOAL = 730000
+REMAINING_OFFICE_GOAL = 750000
+MONTHLY_OFFICE_GOAL = POST_REPOSSESSED_GOAL + REMAINING_OFFICE_GOAL
+SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
+IGNORED_META_OPERATORS = {"luiz.mauro"}
 POSTGRES_DEFAULTS = {
     "host": "",
     "port": 5432,
@@ -177,7 +181,7 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil, ou R$ 300 mil para Ana Karolina e Luiz Mauro."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil; Victor Lima usa R$ 730 mil de pós retomado. Luiz Mauro fica fora da análise de metas por enquanto."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
     "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
@@ -377,14 +381,18 @@ def selected_months_count(resultados):
     return max(len(selected_months(resultados)), 1)
 
 
+def office_goal_for_months(months):
+    return max(len(months), 1) * MONTHLY_OFFICE_GOAL
+
+
 def office_goal_for_resultados(resultados):
-    metas_gerais = load_office_goals()
-    return sum(metas_gerais.get(mes, 0) for mes in selected_months(resultados))
+    return office_goal_for_months(selected_months(resultados))
 
 
 def operator_goal_series(operadores, meses_count):
     operadores = operadores.fillna("")
-    base_goal = np.where(operadores.isin(DOUBLE_GOAL_OPERATORS), 300000, DEFAULT_OPERATOR_GOAL)
+    base_goal = operadores.map(SPECIAL_OPERATOR_GOALS).fillna(DEFAULT_OPERATOR_GOAL)
+    base_goal = base_goal.where(~operadores.isin(IGNORED_META_OPERATORS), 0)
     return pd.Series(base_goal * meses_count, index=operadores.index)
 
 
@@ -507,15 +515,15 @@ def load_office_received():
 
 
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
-    metas_gerais = load_office_goals()
     colaboradores = load_collaborators()
     if operadores_scope:
         colaboradores = colaboradores[colaboradores["OPERADOR"].isin(operadores_scope)].copy()
     meses = selected_months(resultados)
     meses_count = max(len(meses), 1)
-    meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
+    meta_geral = office_goal_for_months(meses)
 
     operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
+    operadores_base = operadores_base[~operadores_base["OPERADOR"].isin(IGNORED_META_OPERATORS)].copy()
     df = operadores_base.merge(operador_df, on="OPERADOR", how="left")
     df = df.merge(colaboradores, on="OPERADOR", how="left")
     metric_cols = [
@@ -2622,7 +2630,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina e Luiz Mauro usam R$ 300.000 por cuidarem de pós retomado.")
+    st.caption("Meta mensal: R$ 150.000 por negociador. Ana Karolina voltou ao padrão; Victor Lima concentra a meta de pós retomado de R$ 730.000. Meta geral mensal: R$ 1.480.000 (R$ 730.000 pós retomado + R$ 750.000 restante). Luiz Mauro fica fora da análise de metas por enquanto.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
