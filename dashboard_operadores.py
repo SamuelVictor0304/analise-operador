@@ -22,6 +22,7 @@ DEFAULT_OPERATOR_GOAL = 150000
 POST_REPOSSESSED_GOAL = 730000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro"}
+DEFAULT_RESULT_MONTH = "JUNHO"
 POSTGRES_DEFAULTS = {
     "host": "",
     "port": 5432,
@@ -957,7 +958,9 @@ def apply_filters(eventos, resultados):
     mes_padrao = []
     if not meses_df.empty:
         mes_atual = MONTH_NAMES_PT.get(pd.Timestamp.today().month)
-        if mes_atual in meses:
+        if DEFAULT_RESULT_MONTH in meses:
+            mes_padrao = [DEFAULT_RESULT_MONTH]
+        elif mes_atual in meses:
             mes_padrao = [mes_atual]
         else:
             meses_validos = meses_df[meses_df["MES_NUM"] <= pd.Timestamp.today().month]
@@ -1796,6 +1799,7 @@ total_acordos = len(resultados)
 total_pagamentos = int(resultados["IS_PAGO"].sum())
 total_em_aberto = int(resultados["IS_EM_ABERTO"].sum())
 total_nao_pagou = int(resultados["IS_NAO_PAGOU"].sum())
+base_quebras = total_pagamentos + total_nao_pagou
 valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
 valor_pago = resultados["VALOR_PAGO"].sum()
 valor_em_aberto = resultados["VALOR_EM_ABERTO"].sum()
@@ -1838,7 +1842,7 @@ with kpi_row3[0]:
 with kpi_row3[1]:
     metric_card("Valor quebras", money_fmt(valor_nao_pagou))
 with kpi_row3[2]:
-    metric_card("Base quebras", f"{num_fmt(total_nao_pagou)} de {num_fmt(total_acordos)}")
+    metric_card("Base quebras", f"{num_fmt(total_nao_pagou)} de {num_fmt(base_quebras)}")
 
 with tabs[0]:
     c1, c2 = st.columns([1.2, 1])
