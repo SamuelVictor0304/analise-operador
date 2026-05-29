@@ -611,10 +611,9 @@ def region_meta_map(region_df, title):
         return
 
     positions = {
-        "NORTE": ("42%", "25%"),
-        "CENTRO-OESTE": ("43%", "47%"),
-        "SUDESTE": ("67%", "57%"),
-        "SUL": ("51%", "78%"),
+        "CENTRO-OESTE": ("45%", "50%"),
+        "SUDESTE": ("63%", "63%"),
+        "SUL": ("48%", "82%"),
     }
     cards = []
     for _, row in region_df.iterrows():
@@ -715,10 +714,31 @@ def region_meta_map(region_df, title):
         </style>
         <div class="region-map">
             <div class="region-map__title">{escape(title)}</div>
-            <svg viewBox="0 0 300 320" aria-hidden="true">
-                <path d="M88 20 C118 12 140 34 160 30 C194 23 228 37 243 67 C267 76 280 104 272 133 C287 157 278 187 252 198 C248 224 226 237 204 232 C188 250 160 248 146 270 C124 270 118 250 101 240 C74 238 59 218 63 196 C42 183 42 158 55 143 C39 124 43 95 63 83 C61 55 68 31 88 20 Z" fill="#5f7580"/>
-                <path d="M77 57 C105 70 124 75 141 98 C158 123 181 126 200 139 C219 152 239 167 252 198" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="2"/>
-                <path d="M101 240 C119 220 126 195 146 174 C164 156 182 151 200 139" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="2"/>
+            <svg viewBox="0 0 300 320" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+                <path d="M95 38
+                         C 100 24, 118 18, 132 22
+                         C 142 14, 158 14, 168 22
+                         C 182 18, 196 24, 198 38
+                         C 214 36, 226 46, 224 60
+                         C 238 62, 246 74, 240 86
+                         C 254 92, 262 108, 258 122
+                         C 272 130, 276 148, 264 162
+                         C 270 178, 256 192, 240 190
+                         C 232 206, 214 212, 200 204
+                         C 196 218, 180 224, 170 218
+                         C 168 232, 156 240, 148 252
+                         C 156 266, 148 282, 134 286
+                         C 124 300, 104 300, 98 286
+                         C 82 286, 74 270, 82 258
+                         C 70 250, 70 232, 82 226
+                         C 70 214, 70 196, 84 192
+                         C 72 178, 76 158, 92 154
+                         C 80 138, 86 116, 102 112
+                         C 90 96, 96 76, 112 72
+                         C 98 60, 100 44, 112 40
+                         Z" fill="#5f7580" stroke="rgba(0,0,0,.18)" stroke-width="1"/>
+                <path d="M120 80 C 150 110, 190 120, 230 150" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1.5"/>
+                <path d="M100 200 C 140 190, 170 200, 200 210" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="1.5"/>
             </svg>
             {''.join(cards)}
         </div>
