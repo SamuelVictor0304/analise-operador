@@ -527,6 +527,205 @@ def load_office_received():
     return {k: float(v) for k, v in received.items() if pd.notna(v)}
 
 
+@st.cache_data(show_spinner=False)
+def load_region_goals():
+    metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
+    header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
+    if len(header_idx) == 0:
+        return pd.DataFrame(columns=["REGIÃO", "MES_RESULTADO", "valor_pago", "meta_regiao"])
+
+    header_row = header_idx[0]
+    headers = metas.iloc[header_row].map(normalize_month_key).tolist()
+    month_abbr = {
+        "JANEIRO": "JAN",
+        "FEVEREIRO": "FEV",
+        "MARÇO": "MAR",
+        "MARCO": "MAR",
+        "ABRIL": "ABR",
+        "MAIO": "MAI",
+        "JUNHO": "JUN",
+        "JULHO": "JUL",
+        "AGOSTO": "AGO",
+        "SETEMBRO": "SET",
+        "OUTUBRO": "OUT",
+        "NOVEMBRO": "NOV",
+        "DEZEMBRO": "DEZ",
+    }
+
+    rows = []
+    for row_idx in range(header_row + 1, len(metas)):
+        row = metas.iloc[row_idx]
+        regiao = normalize_text(row.iloc[0])
+        regiao_key = normalize_month_key(regiao)
+        if not regiao_key:
+            break
+        if regiao_key == "TOTAL":
+            continue
+
+        for month, abbr in month_abbr.items():
+            valor_col = next((i for i, header in enumerate(headers) if header == month), None)
+            meta_col = next((i for i, header in enumerate(headers) if header == f"META {abbr}"), None)
+            valor = pd.to_numeric(row.iloc[valor_col], errors="coerce") if valor_col is not None else 0
+            meta = pd.to_numeric(row.iloc[meta_col], errors="coerce") if meta_col is not None else 0
+            rows.append(
+                {
+                    "REGIÃO": regiao,
+                    "REGIAO_KEY": regiao_key,
+                    "MES_RESULTADO": month,
+                    "valor_pago": 0 if pd.isna(valor) else float(valor),
+                    "meta_regiao": 0 if pd.isna(meta) else float(meta),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def build_region_goal_map(months):
+    region_goals = load_region_goals()
+    if region_goals.empty:
+        return region_goals
+
+    month_keys = [normalize_month_key(month) for month in months]
+    selected = region_goals[region_goals["MES_RESULTADO"].isin(month_keys)].copy()
+    selected = selected[selected["meta_regiao"] > 0]
+    if selected.empty:
+        positive = region_goals[region_goals["meta_regiao"] > 0].copy()
+        if positive.empty:
+            return positive
+        latest_month = positive["MES_RESULTADO"].drop_duplicates().iloc[-1]
+        selected = positive[positive["MES_RESULTADO"].eq(latest_month)].copy()
+
+    df = (
+        selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False)
+        .agg(valor_pago=("valor_pago", "sum"), meta_regiao=("meta_regiao", "sum"))
+        .reset_index()
+    )
+    df["pct_meta_regiao"] = safe_div(df["valor_pago"], df["meta_regiao"])
+    return df.sort_values("pct_meta_regiao", ascending=False)
+
+
+def region_meta_map(region_df, title):
+    if region_df.empty:
+        st.info("Sem metas regionais cadastradas na aba METAS para montar o mapa.")
+        return
+
+    positions = {
+        "NORTE": ("42%", "25%"),
+        "CENTRO-OESTE": ("43%", "47%"),
+        "SUDESTE": ("67%", "57%"),
+        "SUL": ("51%", "78%"),
+    }
+    cards = []
+    for _, row in region_df.iterrows():
+        key = row["REGIAO_KEY"]
+        if key not in positions:
+            continue
+        left, top = positions[key]
+        label = escape(normalize_text(row["REGIÃO"]))
+        pct = escape(pct_fmt(row["pct_meta_regiao"]))
+        meta = escape(money_fmt(row["meta_regiao"]))
+        received = escape(money_fmt(row["valor_pago"]))
+        cards.append(
+            f"""
+            <div class="region-map__pin" style="left:{left};top:{top};"></div>
+            <div class="region-map__card" style="left:{left};top:calc({top} + 18px);">
+                <div class="region-map__label">{label}</div>
+                <div class="region-map__pct">{pct}</div>
+                <div class="region-map__sub">{received} / {meta}</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <style>
+        .region-map {{
+            position: relative;
+            min-height: 430px;
+            border: 1px solid rgba(47,111,115,.45);
+            border-radius: 10px;
+            background: linear-gradient(180deg, #dbe7ea 0%, #b7ccd3 55%, #9fb7c0 100%);
+            overflow: hidden;
+            padding: 18px;
+        }}
+        .region-map__title {{
+            position: relative;
+            z-index: 2;
+            color: #1f2937;
+            font-weight: 800;
+            font-size: 1rem;
+            margin-bottom: 6px;
+        }}
+        .region-map svg {{
+            position: absolute;
+            inset: 18px 18px 10px 18px;
+            width: calc(100% - 36px);
+            height: calc(100% - 28px);
+            opacity: .94;
+        }}
+        .region-map__pin {{
+            position: absolute;
+            z-index: 3;
+            width: 18px;
+            height: 28px;
+            border-radius: 50%;
+            border: 4px solid #1c3656;
+            background: #dceff9;
+            transform: translate(-50%, -50%) rotate(18deg);
+            box-shadow: 0 2px 5px rgba(0,0,0,.35);
+        }}
+        .region-map__card {{
+            position: absolute;
+            z-index: 4;
+            min-width: 118px;
+            transform: translate(-50%, 0);
+            text-align: center;
+            filter: drop-shadow(6px 5px 0 rgba(0,0,0,.20));
+        }}
+        .region-map__label {{
+            display: inline-block;
+            padding: 5px 10px;
+            background: #eef3f5;
+            color: #36434d;
+            font-size: .76rem;
+            font-weight: 800;
+        }}
+        .region-map__pct {{
+            margin: 0 auto;
+            padding: 8px 14px;
+            width: max-content;
+            min-width: 86px;
+            background: rgba(24, 35, 43, .92);
+            color: #ffffff;
+            font-size: 1.42rem;
+            font-weight: 900;
+            line-height: 1;
+        }}
+        .region-map__sub {{
+            margin: 0 auto;
+            padding: 5px 8px;
+            width: max-content;
+            max-width: 170px;
+            background: rgba(24, 35, 43, .82);
+            color: rgba(255,255,255,.82);
+            font-size: .66rem;
+            white-space: nowrap;
+        }}
+        </style>
+        <div class="region-map">
+            <div class="region-map__title">{escape(title)}</div>
+            <svg viewBox="0 0 300 320" aria-hidden="true">
+                <path d="M88 20 C118 12 140 34 160 30 C194 23 228 37 243 67 C267 76 280 104 272 133 C287 157 278 187 252 198 C248 224 226 237 204 232 C188 250 160 248 146 270 C124 270 118 250 101 240 C74 238 59 218 63 196 C42 183 42 158 55 143 C39 124 43 95 63 83 C61 55 68 31 88 20 Z" fill="#5f7580"/>
+                <path d="M77 57 C105 70 124 75 141 98 C158 123 181 126 200 139 C219 152 239 167 252 198" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="2"/>
+                <path d="M101 240 C119 220 126 195 146 174 C164 156 182 151 200 139" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="2"/>
+            </svg>
+            {''.join(cards)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     colaboradores = load_collaborators()
     if operadores_scope:
@@ -2672,6 +2871,9 @@ with tabs[7]:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
     meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje, abertos_hoje)
+
+    region_meta_df = build_region_goal_map(meses_meta)
+    region_meta_map(region_meta_df, f"% da meta por região — {meses_texto}")
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
     meta_resumo.columns = ["Diagnóstico", "Operadores"]
