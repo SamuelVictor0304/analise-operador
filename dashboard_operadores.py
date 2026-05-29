@@ -581,7 +581,7 @@ def load_region_goals():
     return pd.DataFrame(rows)
 
 
-def build_region_goal_map(months):
+def build_region_goal_map(months, resultados=None):
     region_goals = load_region_goals()
     if region_goals.empty:
         return region_goals
@@ -595,12 +595,26 @@ def build_region_goal_map(months):
             return positive
         latest_month = positive["MES_RESULTADO"].drop_duplicates().iloc[-1]
         selected = positive[positive["MES_RESULTADO"].eq(latest_month)].copy()
+        month_keys = [latest_month]
 
     df = (
         selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False)
-        .agg(valor_pago=("valor_pago", "sum"), meta_regiao=("meta_regiao", "sum"))
+        .agg(meta_regiao=("meta_regiao", "sum"))
         .reset_index()
     )
+
+    # valor_pago real vem do dataframe de resultados filtrado pelos meses; a aba
+    # METAS so traz a meta cadastrada, entao usamos os pagamentos efetivos.
+    df["valor_pago"] = 0.0
+    if resultados is not None and not resultados.empty:
+        pagos = resultados.copy()
+        if "MES_RESULTADO" in pagos.columns and month_keys:
+            pagos = pagos[pagos["MES_RESULTADO"].isin(month_keys)]
+        if not pagos.empty and "REGIÃO" in pagos.columns and "VALOR_PAGO" in pagos.columns:
+            pagos["REGIAO_KEY"] = pagos["REGIÃO"].map(normalize_month_key)
+            soma = pagos.groupby("REGIAO_KEY", dropna=False)["VALOR_PAGO"].sum()
+            df["valor_pago"] = df["REGIAO_KEY"].map(soma).fillna(0.0)
+
     df["pct_meta_regiao"] = safe_div(df["valor_pago"], df["meta_regiao"])
     return df.sort_values("pct_meta_regiao", ascending=False)
 
@@ -2925,7 +2939,7 @@ with tabs[7]:
 
     meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje, abertos_hoje)
 
-    region_meta_df = build_region_goal_map(meses_meta)
+    region_meta_df = build_region_goal_map(meses_meta, resultados)
     region_meta_map(region_meta_df, f"% da meta por região — {meses_texto}")
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
