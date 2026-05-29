@@ -20,7 +20,6 @@ EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
 DEFAULT_OPERATOR_GOAL = 150000
 POST_REPOSSESSED_GOAL = 730000
-MONTHLY_OFFICE_GOAL = 1480000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro"}
 POSTGRES_DEFAULTS = {
@@ -380,12 +379,9 @@ def selected_months_count(resultados):
     return max(len(selected_months(resultados)), 1)
 
 
-def office_goal_for_months(months):
-    return max(len(months), 1) * MONTHLY_OFFICE_GOAL
-
-
 def office_goal_for_resultados(resultados):
-    return office_goal_for_months(selected_months(resultados))
+    metas_gerais = load_office_goals()
+    return sum(metas_gerais.get(mes, 0) for mes in selected_months(resultados))
 
 
 def operator_goal_series(operadores, meses_count):
@@ -514,12 +510,13 @@ def load_office_received():
 
 
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
+    metas_gerais = load_office_goals()
     colaboradores = load_collaborators()
     if operadores_scope:
         colaboradores = colaboradores[colaboradores["OPERADOR"].isin(operadores_scope)].copy()
     meses = selected_months(resultados)
     meses_count = max(len(meses), 1)
-    meta_geral = office_goal_for_months(meses)
+    meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
 
     operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
     operadores_base = operadores_base[~operadores_base["OPERADOR"].isin(IGNORED_META_OPERATORS)].copy()
@@ -2629,7 +2626,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta mensal: R$ 150.000 por negociador. A meta geral mensal é R$ 1.480.000 e já considera o pós retomado. Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado. Ana Karolina voltou ao padrão e Luiz Mauro fica fora da análise de metas por enquanto.")
+    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 150.000 por negociador; Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado. Ana Karolina voltou ao padrão e Luiz Mauro fica fora da análise de metas por enquanto.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
