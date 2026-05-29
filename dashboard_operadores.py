@@ -180,7 +180,7 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil; Victor Lima usa R$ 730 mil de pós retomado. Luiz Mauro fica fora da análise de metas por enquanto."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil; Victor Lima usa R$ 730 mil de pós retomado."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
     "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
@@ -2646,7 +2646,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 150.000 por negociador; Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado. Ana Karolina voltou ao padrão e Luiz Mauro fica fora da análise de metas por enquanto.")
+    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 150.000 por negociador; Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
