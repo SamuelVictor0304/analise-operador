@@ -211,6 +211,10 @@ def normalize_status(value):
     return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
+def normalize_month_key(value):
+    return normalize_status(value)
+
+
 def normalize_contract(value):
     if pd.isna(value):
         return np.nan
@@ -380,8 +384,20 @@ def selected_months_count(resultados):
 
 
 def office_goal_for_resultados(resultados):
+    return office_goal_for_months(selected_months(resultados))
+
+
+def office_goal_for_months(months):
     metas_gerais = load_office_goals()
-    return sum(metas_gerais.get(mes, 0) for mes in selected_months(resultados))
+    selected_goals = [metas_gerais.get(normalize_month_key(mes), 0) for mes in months]
+    positive_goals = [goal for goal in selected_goals if goal > 0]
+    if positive_goals:
+        return sum(positive_goals)
+
+    available_goals = [goal for goal in metas_gerais.values() if goal > 0]
+    if not available_goals:
+        return 0
+    return available_goals[-1]
 
 
 def operator_goal_series(operadores, meses_count):
@@ -435,7 +451,7 @@ def load_office_goals():
         return {}
 
     header_row = header_idx[0]
-    headers = metas.iloc[header_row].map(normalize_text).str.upper().tolist()
+    headers = metas.iloc[header_row].map(normalize_month_key).tolist()
     totals = metas.iloc[header_row + 1:].copy()
     total_rows = totals[totals.iloc[:, 0].astype(str).str.strip().str.upper().eq("TOTAL")]
     if total_rows.empty:
@@ -447,6 +463,7 @@ def load_office_goals():
         "JANEIRO": "JAN",
         "FEVEREIRO": "FEV",
         "MARÇO": "MAR",
+        "MARCO": "MAR",
         "ABRIL": "ABR",
         "MAIO": "MAI",
         "JUNHO": "JUN",
@@ -464,7 +481,7 @@ def load_office_goals():
                 target_col = i
                 break
         if target_col is not None:
-            goals[month] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
+            goals[normalize_month_key(month)] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
     return {k: float(v) for k, v in goals.items() if pd.notna(v)}
 
 
@@ -510,13 +527,12 @@ def load_office_received():
 
 
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
-    metas_gerais = load_office_goals()
     colaboradores = load_collaborators()
     if operadores_scope:
         colaboradores = colaboradores[colaboradores["OPERADOR"].isin(operadores_scope)].copy()
     meses = selected_months(resultados)
     meses_count = max(len(meses), 1)
-    meta_geral = sum(metas_gerais.get(mes, 0) for mes in meses)
+    meta_geral = office_goal_for_months(meses)
 
     operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
     operadores_base = operadores_base[~operadores_base["OPERADOR"].isin(IGNORED_META_OPERATORS)].copy()
