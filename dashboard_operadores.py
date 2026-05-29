@@ -681,14 +681,12 @@ def region_meta_map(region_df, title):
         <style>
         .region-map {{
             position: relative;
-            border-radius: 12px;
-            background: linear-gradient(180deg, #e9eef1 0%, #cdd9df 60%, #b7c6cd 100%);
-            padding: 14px 14px 8px 14px;
-            box-shadow: inset 0 0 0 1px rgba(47,111,115,.25);
+            padding: 6px 0 8px 0;
+            background: transparent;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }}
         .region-map__title {{
-            color: #1f2937;
+            color: inherit;
             font-weight: 800;
             font-size: 1rem;
             margin: 0 0 8px 2px;
@@ -696,8 +694,8 @@ def region_meta_map(region_df, title):
         .region-map__stage {{
             position: relative;
             width: 100%;
+            max-width: 560px;
             aspect-ratio: 1 / 1;
-            max-height: 560px;
             margin: 0 auto;
         }}
         .region-map__stage svg {{
