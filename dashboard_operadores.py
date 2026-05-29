@@ -10,6 +10,7 @@ import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 BASE_DIR = Path(__file__).parent
@@ -636,7 +637,7 @@ def region_meta_map(region_df, title):
             """
         )
 
-    st.markdown(
+    components.html(
         f"""
         <style>
         .region-map {{
@@ -722,7 +723,7 @@ def region_meta_map(region_df, title):
             {''.join(cards)}
         </div>
         """,
-        unsafe_allow_html=True,
+        height=455,
     )
 
 
