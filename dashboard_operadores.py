@@ -605,22 +605,62 @@ def build_region_goal_map(months):
     return df.sort_values("pct_meta_regiao", ascending=False)
 
 
+@st.cache_data(show_spinner=False)
+def _load_brazil_regions_svg():
+    path = Path(__file__).parent / "assets" / "brazil_regions.svg"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def region_meta_map(region_df, title):
     if region_df.empty:
         st.info("Sem metas regionais cadastradas na aba METAS para montar o mapa.")
         return
 
-    positions = {
-        "CENTRO-OESTE": ("45%", "50%"),
-        "SUDESTE": ("63%", "63%"),
-        "SUL": ("48%", "82%"),
+    # IBGE region IDs no SVG: 1=Norte, 2=Nordeste, 3=Sudeste, 4=Sul, 5=Centro-Oeste
+    active_keys = {"CENTRO-OESTE", "SUDESTE", "SUL"}
+    region_id = {"NORTE": "1", "NORDESTE": "2", "SUDESTE": "3", "SUL": "4", "CENTRO-OESTE": "5"}
+
+    # Coordenadas (lon, lat) aproximadas do centroide de cada regiao
+    centroids_lonlat = {
+        "CENTRO-OESTE": (-53.0, -14.0),
+        "SUDESTE": (-43.5, -20.0),
+        "SUL": (-52.0, -27.5),
     }
+    # viewBox do SVG IBGE: "-73.9833 -5.2718 39.1806 39.0157" (Y = -lat)
+    vb_x, vb_y, vb_w, vb_h = -73.9833, -5.2718, 39.1806, 39.0157
+
+    def to_pct(lon, lat):
+        x_pct = (lon - vb_x) / vb_w * 100
+        y_pct = (-lat - vb_y) / vb_h * 100
+        return f"{x_pct:.2f}%", f"{y_pct:.2f}%"
+
+    svg_raw = _load_brazil_regions_svg()
+    if not svg_raw:
+        st.warning("SVG do mapa do Brasil nao encontrado em assets/brazil_regions.svg.")
+        return
+
+    # Aplica cores: regioes ativas em verde-azulado, demais em cinza neutro
+    color_active = "#2f6f73"
+    color_inactive = "#5b6b73"
+    stroke = "#102733"
+    svg = svg_raw
+    for key, rid in region_id.items():
+        fill = color_active if key in active_keys else color_inactive
+        svg = svg.replace(f'<path id="{rid}"', f'<path id="{rid}" fill="{fill}" stroke="{stroke}" stroke-width="600"')
+    # garante que o svg externo preencha o container e seja responsivo
+    svg = svg.replace("<svg ", '<svg style="width:100%;height:100%;display:block;" ', 1)
+    svg = re.sub(r'width="\d+"\s*height="\d+"\s*', "", svg, count=1)
+
     cards = []
     for _, row in region_df.iterrows():
         key = row["REGIAO_KEY"]
-        if key not in positions:
+        if key not in centroids_lonlat:
             continue
-        left, top = positions[key]
+        lon, lat = centroids_lonlat[key]
+        left, top = to_pct(lon, lat)
         label = escape(normalize_text(row["REGIÃO"]))
         pct = escape(pct_fmt(row["pct_meta_regiao"]))
         meta = escape(money_fmt(row["meta_regiao"]))
@@ -628,7 +668,7 @@ def region_meta_map(region_df, title):
         cards.append(
             f"""
             <div class="region-map__pin" style="left:{left};top:{top};"></div>
-            <div class="region-map__card" style="left:{left};top:calc({top} + 18px);">
+            <div class="region-map__card" style="left:{left};top:calc({top} + 14px);">
                 <div class="region-map__label">{label}</div>
                 <div class="region-map__pct">{pct}</div>
                 <div class="region-map__sub">{received} / {meta}</div>
@@ -641,38 +681,51 @@ def region_meta_map(region_df, title):
         <style>
         .region-map {{
             position: relative;
-            min-height: 430px;
-            border: 1px solid rgba(47,111,115,.45);
-            border-radius: 10px;
-            background: linear-gradient(180deg, #dbe7ea 0%, #b7ccd3 55%, #9fb7c0 100%);
-            overflow: hidden;
-            padding: 18px;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #e9eef1 0%, #cdd9df 60%, #b7c6cd 100%);
+            padding: 14px 14px 8px 14px;
+            box-shadow: inset 0 0 0 1px rgba(47,111,115,.25);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }}
         .region-map__title {{
-            position: relative;
-            z-index: 2;
             color: #1f2937;
             font-weight: 800;
             font-size: 1rem;
-            margin-bottom: 6px;
+            margin: 0 0 8px 2px;
         }}
-        .region-map svg {{
-            position: absolute;
-            inset: 18px 18px 10px 18px;
-            width: calc(100% - 36px);
-            height: calc(100% - 28px);
-            opacity: .94;
+        .region-map__stage {{
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            max-height: 560px;
+            margin: 0 auto;
+        }}
+        .region-map__stage svg {{
+            width: 100%;
+            height: 100%;
+            display: block;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,.18));
         }}
         .region-map__pin {{
             position: absolute;
             z-index: 3;
-            width: 18px;
-            height: 28px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            border: 4px solid #1c3656;
-            background: #dceff9;
-            transform: translate(-50%, -50%) rotate(18deg);
-            box-shadow: 0 2px 5px rgba(0,0,0,.35);
+            border: 3px solid #0e2230;
+            background: #ffffff;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 2px 4px rgba(0,0,0,.35);
+        }}
+        .region-map__pin::after {{
+            content: "";
+            position: absolute;
+            left: 50%; top: 100%;
+            width: 0; height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 9px solid #0e2230;
+            transform: translateX(-50%);
         }}
         .region-map__card {{
             position: absolute;
@@ -680,70 +733,50 @@ def region_meta_map(region_df, title):
             min-width: 118px;
             transform: translate(-50%, 0);
             text-align: center;
-            filter: drop-shadow(6px 5px 0 rgba(0,0,0,.20));
+            filter: drop-shadow(4px 4px 0 rgba(0,0,0,.18));
         }}
         .region-map__label {{
             display: inline-block;
-            padding: 5px 10px;
+            padding: 4px 10px;
             background: #eef3f5;
             color: #36434d;
             font-size: .76rem;
             font-weight: 800;
+            border-radius: 2px;
         }}
         .region-map__pct {{
-            margin: 0 auto;
-            padding: 8px 14px;
+            margin: 2px auto 0;
+            padding: 6px 14px;
             width: max-content;
             min-width: 86px;
-            background: rgba(24, 35, 43, .92);
+            background: rgba(14, 34, 48, .95);
             color: #ffffff;
-            font-size: 1.42rem;
+            font-size: 1.35rem;
             font-weight: 900;
             line-height: 1;
+            border-radius: 2px;
         }}
         .region-map__sub {{
-            margin: 0 auto;
-            padding: 5px 8px;
+            margin: 1px auto 0;
+            padding: 4px 8px;
             width: max-content;
-            max-width: 170px;
-            background: rgba(24, 35, 43, .82);
-            color: rgba(255,255,255,.82);
+            max-width: 180px;
+            background: rgba(14, 34, 48, .82);
+            color: rgba(255,255,255,.85);
             font-size: .66rem;
             white-space: nowrap;
+            border-radius: 2px;
         }}
         </style>
         <div class="region-map">
             <div class="region-map__title">{escape(title)}</div>
-            <svg viewBox="0 0 300 320" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-                <path d="M95 38
-                         C 100 24, 118 18, 132 22
-                         C 142 14, 158 14, 168 22
-                         C 182 18, 196 24, 198 38
-                         C 214 36, 226 46, 224 60
-                         C 238 62, 246 74, 240 86
-                         C 254 92, 262 108, 258 122
-                         C 272 130, 276 148, 264 162
-                         C 270 178, 256 192, 240 190
-                         C 232 206, 214 212, 200 204
-                         C 196 218, 180 224, 170 218
-                         C 168 232, 156 240, 148 252
-                         C 156 266, 148 282, 134 286
-                         C 124 300, 104 300, 98 286
-                         C 82 286, 74 270, 82 258
-                         C 70 250, 70 232, 82 226
-                         C 70 214, 70 196, 84 192
-                         C 72 178, 76 158, 92 154
-                         C 80 138, 86 116, 102 112
-                         C 90 96, 96 76, 112 72
-                         C 98 60, 100 44, 112 40
-                         Z" fill="#5f7580" stroke="rgba(0,0,0,.18)" stroke-width="1"/>
-                <path d="M120 80 C 150 110, 190 120, 230 150" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1.5"/>
-                <path d="M100 200 C 140 190, 170 200, 200 210" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="1.5"/>
-            </svg>
-            {''.join(cards)}
+            <div class="region-map__stage">
+                {svg}
+                {''.join(cards)}
+            </div>
         </div>
         """,
-        height=455,
+        height=620,
     )
 
 
