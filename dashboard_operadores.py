@@ -122,6 +122,14 @@ FIELD_HELP = {
     "SEGMENTO_DPD": ("Segmento DPD", "Classificação do contrato pela coluna Y/DPD Formula: POTLOSS 1-720, SALVAGE 721-1440 e SALVAGE + acima de 1440."),
     "prioridade_workplan": ("Prioridade", "Classificação do contrato no Workplan pelo score de recuperação."),
     "score_recuperacao": ("Score recuperação", "Score de priorização futura combinando segmento, valor, histórico de CPC e tempo sem contato. Contratos com pagamento ou acordo em aberto são excluídos da recomendação."),
+    "probabilidade_recuperacao": ("Chance recuperação", "Probabilidade estimada de recuperação com base no histórico de contratos de perfil semelhante."),
+    "valor_potencial": ("Valor potencial", "Valor financeiro em aberto do contrato usado para dimensionar a oportunidade."),
+    "valor_esperado_recuperacao": ("Valor esperado", "Valor potencial ponderado pela chance e pela recuperação média histórica do perfil."),
+    "base_probabilidade": ("Base probabilidade", "Nível de perfil histórico usado para estimar a chance de recuperação."),
+    "contratos_hist": ("Contratos hist.", "Quantidade de contratos históricos usados no perfil de comparação."),
+    "recuperacao_media_perfil": ("% recuperado perfil", "Valor pago dividido pelo valor negociado no perfil histórico semelhante."),
+    "risco_quebra_perfil": ("Risco quebra perfil", "Acordos não pagos divididos por acordos históricos do perfil semelhante."),
+    "motivo_abordagem": ("Motivo abordagem", "Motivo prático sugerido para abordar ou priorizar o cliente."),
     "motivo_priorizacao": ("Motivo priorização", "Principais fatores que aumentaram a prioridade do contrato."),
     "cpf_cnpj": ("CPF/CNPJ", "Documento do cliente conforme Workplan."),
     "PRODUTO": ("Produto", "Produto/carteira localizado no histórico de contratos."),
@@ -303,6 +311,16 @@ def safe_div(num, den):
 
 def scalar_safe_div(num, den):
     return 0 if pd.isna(den) or den == 0 else num / den
+
+
+def normalized_upper(value):
+    return normalize_text(value).upper()
+
+
+def is_pos_retomado(value):
+    text = normalized_upper(value)
+    compact = re.sub(r"[^A-Z0-9]", "", text)
+    return compact in {"POSRETOMADO", "POSTRETOMADO", "POSRETOMADA", "POSTRETOMADA"}
 
 
 def streamlit_secret_section(name):
@@ -1079,20 +1097,40 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     df["dias_sem_contato"] = (hoje - ultimo_contato).dt.days
     df["dias_sem_contato"] = df["dias_sem_contato"].fillna(999).clip(lower=0)
 
-    segmento_score = df["SEGMENTO_DPD"].map({"POTLOSS": 0.25, "SALVAGE": 0.16, "SALVAGE +": 0.08}).fillna(0)
-    valor_score = pd.to_numeric(df["total_amount_due"], errors="coerce").rank(pct=True).fillna(0) * 0.22
-    cpc_score = np.where((df["cpcs_hist"] > 0) | df["flag_cpc"].eq("SIM"), 0.16, 0)
-    contato_score = np.select(
-        [
-            df["dias_sem_contato"] >= 30,
-            df["dias_sem_contato"] >= 15,
-            df["dias_sem_contato"] >= 7,
-        ],
-        [0.20, 0.14, 0.08],
-        default=0.03,
+    profile_rates, global_profile_rates = build_recovery_profile_rates(eventos_hist, resultados_hist)
+    df = apply_recovery_profile_rates(df, profile_rates, global_profile_rates)
+
+    df["probabilidade_recuperacao"] = (
+        df["prob_pagamento_perfil"].fillna(0) * 0.70
+        + df["prob_acordo_perfil"].fillna(0) * 0.20
+        + df["recuperacao_media_perfil"].fillna(0) * 0.10
+    ).clip(lower=0, upper=1)
+    df["probabilidade_recuperacao"] = np.where(
+        (df["cpcs_hist"] > 0) | df["flag_cpc"].eq("SIM"),
+        np.minimum(df["probabilidade_recuperacao"] * 1.12, 1),
+        df["probabilidade_recuperacao"],
     )
-    cobravel_score = np.where(df["flag_cobravel"].eq("SIM"), 0.05, -0.20)
-    df["score_recuperacao"] = (segmento_score + valor_score + cpc_score + contato_score + cobravel_score).clip(0, 1)
+    df["probabilidade_recuperacao"] = np.where(
+        df["dias_sem_contato"] >= 60,
+        df["probabilidade_recuperacao"] * 0.95,
+        df["probabilidade_recuperacao"],
+    )
+    df["probabilidade_recuperacao"] = np.where(
+        df["flag_cobravel"].eq("SIM"),
+        df["probabilidade_recuperacao"],
+        df["probabilidade_recuperacao"] * 0.35,
+    )
+
+    df["valor_potencial"] = df["total_amount_due"].fillna(0)
+    df["valor_esperado_recuperacao"] = (
+        df["valor_potencial"]
+        * df["probabilidade_recuperacao"]
+        * df["recuperacao_media_perfil"].fillna(global_profile_rates.get("recuperacao_media_perfil", 0))
+    )
+    valor_rank = df["valor_potencial"].rank(pct=True).fillna(0)
+    esperado_rank = df["valor_esperado_recuperacao"].rank(pct=True).fillna(0)
+    prob_rank = df["probabilidade_recuperacao"].rank(pct=True).fillna(0)
+    df["score_recuperacao"] = (prob_rank * 0.45 + esperado_rank * 0.40 + valor_rank * 0.15).clip(0, 1)
     df["prioridade_workplan"] = np.select(
         [
             df["score_recuperacao"] >= 0.70,
@@ -1101,6 +1139,15 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
         ["Alta", "Média"],
         default="Baixa",
     )
+
+    valor_alto_limite = df["valor_potencial"].quantile(0.75) if not df.empty else 0
+    probabilidade_alta_limite = df["probabilidade_recuperacao"].quantile(0.75) if not df.empty else 0
+    df["valor_alto_limite"] = valor_alto_limite
+    df["probabilidade_alta_limite"] = probabilidade_alta_limite
+    df["motivo_abordagem"] = df.apply(abordagem_workplan, axis=1)
+    df["motivo_priorizacao"] = df["motivo_abordagem"]
+    df = df.drop(columns=["valor_alto_limite", "probabilidade_alta_limite"], errors="ignore")
+    return df.sort_values(["valor_esperado_recuperacao", "score_recuperacao", "total_amount_due"], ascending=False)
 
     motivos = []
     for _, row in df.iterrows():
@@ -1443,6 +1490,206 @@ def add_projection_group(df, columns):
         return grouped
     grouped["grupo"] = group_label(grouped, columns)
     return grouped
+
+
+def value_band(value):
+    amount = pd.to_numeric(value, errors="coerce")
+    if pd.isna(amount):
+        return "Sem valor"
+    if amount < 1000:
+        return "Ate 1k"
+    if amount < 5000:
+        return "1k-5k"
+    if amount < 15000:
+        return "5k-15k"
+    if amount < 50000:
+        return "15k-50k"
+    return "50k+"
+
+
+def no_contact_band(days):
+    days = pd.to_numeric(days, errors="coerce")
+    if pd.isna(days):
+        return "Sem contato"
+    if days < 7:
+        return "0-6 dias"
+    if days < 15:
+        return "7-14 dias"
+    if days < 30:
+        return "15-29 dias"
+    if days < 60:
+        return "30-59 dias"
+    return "60+ dias"
+
+
+def profile_key(df, columns):
+    cols = [col for col in columns if col in df.columns]
+    if not cols:
+        return pd.Series("GERAL", index=df.index, dtype="object")
+    return df[cols].apply(lambda row: "||".join(normalize_text(value).upper() or "SEM_INFO" for value in row), axis=1)
+
+
+def build_recovery_profile_rates(eventos_hist, resultados_hist):
+    base_cols = ["CONTRATO_KEY", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIAO", "UF", "TOTAL ABERTO"]
+    if "PRODUTO" in eventos_hist.columns:
+        base_cols.append("PRODUTO")
+    base_cols = [col for col in base_cols if col in eventos_hist.columns]
+    if not base_cols or eventos_hist.empty:
+        return {}, {}
+
+    hist = eventos_hist[base_cols + ["IS_CPC", "DATA"]].dropna(subset=["CONTRATO_KEY"]).copy()
+    if hist.empty:
+        return {}, {}
+
+    profile_aggs = {col: (col, lambda s: normalize_text(s.dropna().iloc[-1]) if not s.dropna().empty else "") for col in base_cols if col != "CONTRATO_KEY"}
+    profile_aggs["cpcs_hist_base"] = ("IS_CPC", "sum")
+    profile_aggs["ultimo_acionamento_base"] = ("DATA", "max")
+    hist = hist.groupby("CONTRATO_KEY", dropna=True).agg(**profile_aggs).reset_index()
+
+    resultados_contrato = resultados_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+        acordos_hist_base=("CONTRATO_KEY", "count"),
+        pagamentos_hist_base=("IS_PAGO", "sum"),
+        acordos_nao_pagou_hist_base=("IS_NAO_PAGOU", "sum"),
+        valor_negociado_hist_base=("VALOR_NEGOCIADO", "sum"),
+        valor_pago_hist_base=("VALOR_PAGO", "sum"),
+    ).reset_index()
+    hist = hist.merge(resultados_contrato, on="CONTRATO_KEY", how="left")
+    for col in [
+        "acordos_hist_base",
+        "pagamentos_hist_base",
+        "acordos_nao_pagou_hist_base",
+        "valor_negociado_hist_base",
+        "valor_pago_hist_base",
+    ]:
+        hist[col] = hist[col].fillna(0)
+
+    hist["flag_cpc_perfil"] = np.where(hist["cpcs_hist_base"] > 0, "SIM", "NAO")
+    valor_historico = pd.to_numeric(hist["valor_negociado_hist_base"], errors="coerce").fillna(0)
+    if "TOTAL ABERTO" in hist.columns:
+        total_aberto_hist = pd.to_numeric(hist["TOTAL ABERTO"], errors="coerce").fillna(0)
+        valor_historico = valor_historico.where(valor_historico > 0, total_aberto_hist)
+    hist["valor_faixa"] = valor_historico.map(value_band)
+    hoje = pd.Timestamp.today().normalize()
+    hist["dias_sem_contato_perfil"] = (hoje - pd.to_datetime(hist["ultimo_acionamento_base"], errors="coerce")).dt.days
+    hist["dias_sem_contato_faixa"] = hist["dias_sem_contato_perfil"].map(no_contact_band)
+
+    if "REGIAO" in hist.columns and "REGIÃO" not in hist.columns:
+        hist["REGIÃO"] = hist["REGIAO"]
+    if "UF" in hist.columns and "uf" not in hist.columns:
+        hist["uf"] = hist["UF"]
+
+    profile_sets = [
+        ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "PRODUTO", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
+        ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa"],
+        ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "flag_cpc_perfil"],
+        ["SEGMENTO_DPD", "FAIXA_ATRASO", "flag_cpc_perfil"],
+        ["SEGMENTO_DPD", "flag_cpc_perfil"],
+        ["SEGMENTO_DPD"],
+    ]
+
+    rates = {}
+    for idx, cols in enumerate(profile_sets):
+        cols = [col for col in cols if col in hist.columns]
+        if not cols:
+            continue
+        frame = hist.copy()
+        frame["_profile_key"] = profile_key(frame, cols)
+        grouped = frame.groupby("_profile_key", dropna=False).agg(
+            contratos_hist=("CONTRATO_KEY", "nunique"),
+            acordos_hist_perfil=("acordos_hist_base", lambda s: (s > 0).sum()),
+            pagamentos_hist_perfil=("pagamentos_hist_base", lambda s: (s > 0).sum()),
+            quebras_hist_perfil=("acordos_nao_pagou_hist_base", lambda s: (s > 0).sum()),
+            valor_negociado_hist_perfil=("valor_negociado_hist_base", "sum"),
+            valor_pago_hist_perfil=("valor_pago_hist_base", "sum"),
+        ).reset_index()
+        grouped["prob_acordo_perfil"] = safe_div(grouped["acordos_hist_perfil"], grouped["contratos_hist"])
+        grouped["prob_pagamento_perfil"] = safe_div(grouped["pagamentos_hist_perfil"], grouped["contratos_hist"])
+        grouped["recuperacao_media_perfil"] = safe_div(grouped["valor_pago_hist_perfil"], grouped["valor_negociado_hist_perfil"])
+        grouped["risco_quebra_perfil"] = safe_div(grouped["quebras_hist_perfil"], grouped["acordos_hist_perfil"])
+        rates[idx] = {"columns": cols, "data": grouped}
+
+    totals = {
+        "contratos_hist": hist["CONTRATO_KEY"].nunique(),
+        "acordos_hist_perfil": int((hist["acordos_hist_base"] > 0).sum()),
+        "pagamentos_hist_perfil": int((hist["pagamentos_hist_base"] > 0).sum()),
+        "quebras_hist_perfil": int((hist["acordos_nao_pagou_hist_base"] > 0).sum()),
+        "valor_negociado_hist_perfil": float(hist["valor_negociado_hist_base"].sum()),
+        "valor_pago_hist_perfil": float(hist["valor_pago_hist_base"].sum()),
+    }
+    totals["prob_acordo_perfil"] = scalar_safe_div(totals["acordos_hist_perfil"], totals["contratos_hist"])
+    totals["prob_pagamento_perfil"] = scalar_safe_div(totals["pagamentos_hist_perfil"], totals["contratos_hist"])
+    totals["recuperacao_media_perfil"] = scalar_safe_div(totals["valor_pago_hist_perfil"], totals["valor_negociado_hist_perfil"])
+    totals["risco_quebra_perfil"] = scalar_safe_div(totals["quebras_hist_perfil"], totals["acordos_hist_perfil"])
+    for profile in rates.values():
+        grouped = profile["data"]
+        weight = (grouped["contratos_hist"] / (grouped["contratos_hist"] + 20)).fillna(0)
+        for col in ["prob_acordo_perfil", "prob_pagamento_perfil", "recuperacao_media_perfil", "risco_quebra_perfil"]:
+            grouped[col] = (grouped[col] * weight) + totals[col] * (1 - weight)
+            grouped[col] = grouped[col].clip(lower=0, upper=1)
+        profile["data"] = grouped
+    return rates, totals
+
+
+def apply_recovery_profile_rates(workplan_df, profile_rates, global_rates):
+    df = workplan_df.copy()
+    defaults = {
+        "contratos_hist": global_rates.get("contratos_hist", 0),
+        "prob_acordo_perfil": global_rates.get("prob_acordo_perfil", 0),
+        "prob_pagamento_perfil": global_rates.get("prob_pagamento_perfil", 0),
+        "recuperacao_media_perfil": global_rates.get("recuperacao_media_perfil", 0),
+        "risco_quebra_perfil": global_rates.get("risco_quebra_perfil", 0),
+        "base_probabilidade": "Média geral",
+    }
+    for col, value in defaults.items():
+        df[col] = value
+
+    if "uf" not in df.columns and "UF" in df.columns:
+        df["uf"] = df["UF"]
+    df["flag_cpc_perfil"] = np.where((df["cpcs_hist"] > 0) | df["flag_cpc"].eq("SIM"), "SIM", "NAO")
+    df["valor_faixa"] = df["total_amount_due"].map(value_band)
+    df["dias_sem_contato_faixa"] = df["dias_sem_contato"].map(no_contact_band)
+
+    metric_cols = [
+        "contratos_hist",
+        "prob_acordo_perfil",
+        "prob_pagamento_perfil",
+        "recuperacao_media_perfil",
+        "risco_quebra_perfil",
+    ]
+    for idx in sorted(profile_rates):
+        cols = profile_rates[idx]["columns"]
+        rates = profile_rates[idx]["data"]
+        if not cols or rates.empty or not all(col in df.columns for col in cols):
+            continue
+        lookup = rates.set_index("_profile_key")[metric_cols].to_dict("index")
+        keys = profile_key(df, cols)
+        matched = keys.map(lookup)
+        mask = matched.notna() & df["base_probabilidade"].eq("Média geral")
+        if not mask.any():
+            continue
+        matched_df = pd.DataFrame(matched[mask].tolist(), index=df.index[mask])
+        for col in metric_cols:
+            df.loc[mask, col] = matched_df[col]
+        df.loc[mask, "base_probabilidade"] = "Perfil: " + " + ".join(cols)
+
+    return df
+
+
+def abordagem_workplan(row):
+    reasons = []
+    if row.get("cpcs_hist", 0) > 0 and row.get("acordos_hist", 0) <= 0:
+        reasons.append("CPC recente sem acordo")
+    if row.get("total_amount_due", 0) >= row.get("valor_alto_limite", 0) and row.get("dias_sem_contato", 0) >= 30:
+        reasons.append("Alto valor sem contato ha 30+ dias")
+    if row.get("probabilidade_alta_limite", 0) > 0 and row.get("probabilidade_recuperacao", 0) >= row.get("probabilidade_alta_limite", 0):
+        reasons.append("Perfil com alta conversao historica")
+    if row.get("flag_cobravel") == "SIM" and row.get("acionamentos_hist", 0) <= 0:
+        reasons.append("Contrato cobravel sem tentativa recente")
+    if row.get("acordos_nao_pagou_hist", 0) > 0 or row.get("risco_quebra_perfil", 0) >= 0.40:
+        reasons.append("Quebrou acordo antes, abordar com cautela")
+    if row.get("base_probabilidade") == "Média geral":
+        reasons.append("Sem perfil historico especifico")
+    return "; ".join(reasons[:3]) if reasons else "Prospectar conforme perfil historico"
 
 
 def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, workplan_col, eventos_col, resultados_col):
@@ -1857,6 +2104,8 @@ def display_fields(df):
         "valor_pago_hist",
         "carteira_elegivel",
         "recuperacao_esperada",
+        "valor_potencial",
+        "valor_esperado_recuperacao",
     ]
     pct_cols = [
         "tx_contato",
@@ -1885,6 +2134,11 @@ def display_fields(df):
         "taxa_pagamento",
         "percentual_medio_recuperado",
         "recuperacao_esperada_pct_carteira",
+        "probabilidade_recuperacao",
+        "prob_acordo_perfil",
+        "prob_pagamento_perfil",
+        "recuperacao_media_perfil",
+        "risco_quebra_perfil",
     ]
     num_cols = [
         "acionamentos",
@@ -1909,6 +2163,7 @@ def display_fields(df):
         "cpcs_hist",
         "acordos_hist",
         "pagamentos_hist",
+        "contratos_hist",
     ]
     for col in money_cols:
         if col in out:
@@ -1939,6 +2194,8 @@ def formatted_table(df):
         "valor_pago_hist",
         "carteira_elegivel",
         "recuperacao_esperada",
+        "valor_potencial",
+        "valor_esperado_recuperacao",
     ]:
         if col in out:
             out[col] = out[col].map(money_fmt)
@@ -1969,6 +2226,11 @@ def formatted_table(df):
         "taxa_pagamento",
         "percentual_medio_recuperado",
         "recuperacao_esperada_pct_carteira",
+        "probabilidade_recuperacao",
+        "prob_acordo_perfil",
+        "prob_pagamento_perfil",
+        "recuperacao_media_perfil",
+        "risco_quebra_perfil",
     ]:
         if col in out:
             out[col] = out[col].map(pct_fmt)
@@ -1995,6 +2257,7 @@ def formatted_table(df):
         "cpcs_hist",
         "acordos_hist",
         "pagamentos_hist",
+        "contratos_hist",
     ]:
         if col in out:
             out[col] = out[col].map(num_fmt)
@@ -3021,12 +3284,13 @@ with tabs[8]:
         elegivel_df = workplan_df[
             workplan_df["pagamentos_hist"].eq(0)
             & workplan_df["acordos_em_aberto_hist"].eq(0)
+            & ~workplan_df["status_base"].map(is_pos_retomado)
+            & workplan_df["flag_cobravel"].eq("SIM")
         ].copy()
-        cobravel_df = elegivel_df[elegivel_df["flag_cobravel"].eq("SIM")].copy()
-        base_workplan = cobravel_df if not cobravel_df.empty else elegivel_df
+        base_workplan = elegivel_df
 
         if base_workplan.empty:
-            st.info("Sem contratos sem pagamento histórico e sem acordo em aberto para recomendar.")
+            st.info("Sem contratos cobraveis, sem pagamento historico, sem acordo em aberto e fora de POS RETOMADO para recomendar.")
 
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
@@ -3038,8 +3302,13 @@ with tabs[8]:
         with c4:
             metric_card("Com CPC histórico", num_fmt((base_workplan["cpcs_hist"] > 0).sum()))
         with c5:
-            excluidos = workplan_df["pagamentos_hist"].gt(0) | workplan_df["acordos_em_aberto_hist"].gt(0)
-            metric_card("Pagos/em aberto excluídos", num_fmt(excluidos.sum()))
+            excluidos = (
+                workplan_df["pagamentos_hist"].gt(0)
+                | workplan_df["acordos_em_aberto_hist"].gt(0)
+                | workplan_df["status_base"].map(is_pos_retomado)
+                | ~workplan_df["flag_cobravel"].eq("SIM")
+            )
+            metric_card("Fora da prospeccao", num_fmt(excluidos.sum()))
 
         prioridade_sel = st.multiselect("Prioridade Workplan", ["Alta", "Média", "Baixa"], default=["Alta", "Média"])
         segmento_sel = st.multiselect("Segmento Workplan", ["POTLOSS", "SALVAGE", "SALVAGE +"])
@@ -3053,7 +3322,13 @@ with tabs[8]:
         with c1:
             prioridade_df = (
                 workplan_view.groupby("prioridade_workplan")
-                .agg(contratos=("CONTRATO_KEY", "nunique"), total_amount_due=("total_amount_due", "sum"), score_recuperacao=("score_recuperacao", "mean"))
+                .agg(
+                    contratos=("CONTRATO_KEY", "nunique"),
+                    total_amount_due=("total_amount_due", "sum"),
+                    valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+                    probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+                    score_recuperacao=("score_recuperacao", "mean"),
+                )
                 .reset_index()
             )
             prioridade_df = display_fields(prioridade_df.rename(columns={"contratos": "clientes"}))
@@ -3062,14 +3337,27 @@ with tabs[8]:
                 x="total_amount_due:Q",
                 y=alt.Y("prioridade_workplan:N", sort=["Alta", "Média", "Baixa"], title=None),
                 color="prioridade_workplan:N",
-                tooltip=["prioridade_workplan", "clientes_br", "total_amount_due_br", "score_recuperacao_br"],
+                tooltip=[
+                    "prioridade_workplan",
+                    "clientes_br",
+                    "total_amount_due_br",
+                    "valor_esperado_recuperacao_br",
+                    "probabilidade_recuperacao_br",
+                    "score_recuperacao_br",
+                ],
                 title="Valor em aberto por prioridade",
                 sort=None,
             )
         with c2:
             segmento_workplan = (
                 workplan_view.groupby("SEGMENTO_DPD")
-                .agg(clientes=("CONTRATO_KEY", "nunique"), total_amount_due=("total_amount_due", "sum"), score_recuperacao=("score_recuperacao", "mean"))
+                .agg(
+                    clientes=("CONTRATO_KEY", "nunique"),
+                    total_amount_due=("total_amount_due", "sum"),
+                    valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+                    probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+                    score_recuperacao=("score_recuperacao", "mean"),
+                )
                 .reset_index()
             )
             segmento_workplan = display_fields(segmento_workplan)
@@ -3077,7 +3365,14 @@ with tabs[8]:
                 segmento_workplan,
                 x="total_amount_due:Q",
                 y=alt.Y("SEGMENTO_DPD:N", sort=["POTLOSS", "SALVAGE", "SALVAGE +", "Sem DPD"], title=None),
-                tooltip=["SEGMENTO_DPD", "clientes_br", "total_amount_due_br", "score_recuperacao_br"],
+                tooltip=[
+                    "SEGMENTO_DPD",
+                    "clientes_br",
+                    "total_amount_due_br",
+                    "valor_esperado_recuperacao_br",
+                    "probabilidade_recuperacao_br",
+                    "score_recuperacao_br",
+                ],
                 title="Valor em aberto por segmento",
                 sort=None,
             )
@@ -3186,6 +3481,14 @@ with tabs[8]:
                 "PRODUTO",
                 "prioridade_workplan",
                 "score_recuperacao",
+                "probabilidade_recuperacao",
+                "valor_potencial",
+                "valor_esperado_recuperacao",
+                "base_probabilidade",
+                "contratos_hist",
+                "recuperacao_media_perfil",
+                "risco_quebra_perfil",
+                "motivo_abordagem",
                 "SEGMENTO_DPD",
                 "FAIXA_ATRASO",
                 "REGIÃO",
@@ -3222,7 +3525,14 @@ with tabs[8]:
             "PRODUTO",
             "prioridade_workplan",
             "score_recuperacao",
-            "motivo_priorizacao",
+            "probabilidade_recuperacao",
+            "valor_potencial",
+            "valor_esperado_recuperacao",
+            "base_probabilidade",
+            "contratos_hist",
+            "recuperacao_media_perfil",
+            "risco_quebra_perfil",
+            "motivo_abordagem",
             "SEGMENTO_DPD",
             "FAIXA_ATRASO",
             "REGIÃO",
