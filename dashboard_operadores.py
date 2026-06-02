@@ -1857,11 +1857,24 @@ def meta_progress_color(pct):
     return blend_hex("#1f7a4d", "#72d391", (pct - 0.80) / 0.20)
 
 
-def meta_gauge(value, target, month_label, open_today_count, open_today_value, open_today_rows=None, title="Recebimento Total"):
+def meta_gauge(
+    value,
+    target,
+    month_label,
+    open_today_count,
+    open_today_value,
+    paid_today_count,
+    paid_today_value,
+    open_today_rows=None,
+    paid_today_rows=None,
+    title="Recebimento Total",
+):
     value = 0 if pd.isna(value) else float(value)
     target = 0 if pd.isna(target) else float(target)
     open_today_count = 0 if pd.isna(open_today_count) else int(open_today_count)
     open_today_value = 0 if pd.isna(open_today_value) else float(open_today_value)
+    paid_today_count = 0 if pd.isna(paid_today_count) else int(paid_today_count)
+    paid_today_value = 0 if pd.isna(paid_today_value) else float(paid_today_value)
     if target <= 0:
         st.info("Sem meta geral cadastrada para montar o indicador.")
         return
@@ -1883,6 +1896,20 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
                 f'<div class="meta-tooltip__row"><span>{escape(cliente)}</span><span>{escape(operador)}</span><strong>{escape(valor)}</strong></div>'
             )
         open_today_html = "".join(items)
+
+    paid_today_rows = paid_today_rows if paid_today_rows is not None else pd.DataFrame()
+    if paid_today_rows.empty:
+        paid_today_html = '<div class="meta-tooltip__empty">Sem recebimentos registrados hoje.</div>'
+    else:
+        items = []
+        for _, row in paid_today_rows.sort_values(["OPERADOR", "NOME DO CLIENTE"]).iterrows():
+            cliente = normalize_text(row.get("NOME DO CLIENTE", "Cliente sem nome"))
+            operador = normalize_text(row.get("OPERADOR", ""))
+            valor = money_fmt(row.get("VALOR_PAGO", 0))
+            items.append(
+                f'<div class="meta-tooltip__row"><span>{escape(cliente)}</span><span>{escape(operador)}</span><strong>{escape(valor)}</strong></div>'
+            )
+        paid_today_html = "".join(items)
 
     cx, cy, radius = 320, 230, 185
     bg_path = gauge_path(cx, cy, radius, 0, 1)
@@ -1920,7 +1947,7 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
             font-size: 1.02rem;
             font-weight: 750;
         }}
-        .meta-panel__open {{
+        .meta-panel__daily-row {{
             position: relative;
             display: grid;
             grid-template-columns: 1fr auto;
@@ -1930,7 +1957,7 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
             cursor: default;
             font-size: .86rem;
         }}
-        .meta-panel__open span {{
+        .meta-panel__daily-row span {{
             color: rgba(255,255,255,.82);
         }}
         .meta-panel__today-value {{
@@ -1954,7 +1981,7 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
             background: #07111f;
             box-shadow: 0 18px 34px rgba(0,0,0,.35);
         }}
-        .meta-panel__open:hover .meta-tooltip {{
+        .meta-panel__daily-row:hover .meta-tooltip {{
             display: block;
         }}
         .meta-tooltip__title {{
@@ -2010,7 +2037,15 @@ def meta_gauge(value, target, month_label, open_today_count, open_today_value, o
                     </div>
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Hoje</div>
-                        <div class="meta-panel__open">
+                        <div class="meta-panel__daily-row">
+                            <span>Recebido</span><strong>{escape(num_fmt(paid_today_count))}</strong>
+                            <div class="meta-tooltip">
+                                <div class="meta-tooltip__title">Recebimentos de hoje</div>
+                                {paid_today_html}
+                            </div>
+                        </div>
+                        <div class="meta-panel__today-value">{escape(money_fmt(paid_today_value))}</div>
+                        <div class="meta-panel__daily-row">
                             <span>Em aberto</span><strong>{escape(num_fmt(open_today_count))}</strong>
                             <div class="meta-tooltip">
                                 <div class="meta-tooltip__title">Boletos em aberto hoje</div>
@@ -2285,11 +2320,124 @@ def data_table(df, **kwargs):
 
 
 def dataframe_to_excel_bytes(df, sheet_name="Workplan", extra_sheets=None):
+    money_cols = {
+        "valor_negociado",
+        "valor_pago",
+        "valor_em_aberto",
+        "valor_nao_pagou",
+        "valor_quebra",
+        "ticket_medio",
+        "meta_individual",
+        "saldo_meta_individual",
+        "meta_geral_escritorio",
+        "total_amount_due",
+        "valor_negociado_hist",
+        "valor_pago_hist",
+        "carteira_elegivel",
+        "recuperacao_esperada",
+        "valor_potencial",
+        "valor_esperado_recuperacao",
+    }
+    pct_cols = {
+        "tx_contato",
+        "tx_acordo",
+        "tx_acordo_cliente_cpc",
+        "tx_pagamento",
+        "efetividade_pagamento",
+        "pct_quebra",
+        "tx_pagamento_cpc",
+        "tx_sem_pagamento",
+        "tx_cpc_acordo",
+        "tx_cpc_pagamento",
+        "tx_cpc_unico_acordo",
+        "tx_cpc_unico_pagamento",
+        "tx_acordo_pagamento",
+        "tx_acordo_sem_pagamento",
+        "recuperacao",
+        "score",
+        "atingimento_meta_individual",
+        "pct_aberto_meta_individual",
+        "participacao_meta_geral",
+        "score_recuperacao",
+        "taxa_contato",
+        "taxa_cpc",
+        "taxa_acordo",
+        "taxa_pagamento",
+        "percentual_medio_recuperado",
+        "recuperacao_esperada_pct_carteira",
+        "probabilidade_recuperacao",
+        "prob_acordo_perfil",
+        "prob_pagamento_perfil",
+        "recuperacao_media_perfil",
+        "risco_quebra_perfil",
+    }
+    int_cols = {
+        "acionamentos",
+        "clientes_trabalhados",
+        "contatos_efetivos",
+        "contatos_cliente",
+        "cpcs",
+        "cpcs_unicos",
+        "clientes_cpc",
+        "contratos_cpc",
+        "acordos",
+        "pagamentos",
+        "acordos_sem_pagamento",
+        "acordos_em_aberto",
+        "acordos_nao_pagou",
+        "clientes",
+        "contratos_elegiveis",
+        "dpd",
+        "dias_sem_contato",
+        "acionamentos_hist",
+        "contatos_cliente_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
+        "contratos_hist",
+    }
+
+    def format_sheet(ws, source_df):
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        if source_df.empty:
+            return
+
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        header_fill = PatternFill("solid", fgColor="213547")
+        for cell in ws[1]:
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = header_fill
+
+        for idx, col in enumerate(source_df.columns, start=1):
+            letter = get_column_letter(idx)
+            sample = [str(col)] + ["" if pd.isna(value) else str(value) for value in source_df[col].head(100)]
+            width = min(max(max(len(value) for value in sample) + 2, 10), 42)
+            ws.column_dimensions[letter].width = width
+
+            if col in money_cols:
+                number_format = 'R$ #,##0.00'
+            elif col in pct_cols:
+                number_format = '0.0%'
+            elif col in int_cols:
+                number_format = '#,##0'
+            else:
+                number_format = None
+
+            if number_format:
+                for row in range(2, ws.max_row + 1):
+                    ws.cell(row=row, column=idx).number_format = number_format
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
         for extra_sheet_name, extra_df in (extra_sheets or {}).items():
             extra_df.to_excel(writer, index=False, sheet_name=extra_sheet_name)
+        format_sheet(writer.book[sheet_name], df)
+        for extra_sheet_name, extra_df in (extra_sheets or {}).items():
+            format_sheet(writer.book[extra_sheet_name], extra_df)
     return output.getvalue()
 
 
@@ -3184,6 +3332,9 @@ with tabs[7]:
     abertos_hoje = resultados[resultados["IS_EM_ABERTO"] & resultados["DATA_VENCIMENTO"].dt.normalize().eq(hoje)]
     boletos_abertos_hoje = len(abertos_hoje)
     valor_aberto_hoje = abertos_hoje["VALOR_EM_ABERTO"].sum()
+    recebidos_hoje = resultados[resultados["IS_PAGO"] & resultados["DATA_PAGAMENTO"].dt.normalize().eq(hoje)]
+    boletos_recebidos_hoje = len(recebidos_hoje)
+    valor_recebido_hoje = recebidos_hoje["VALOR_PAGO"].sum()
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -3200,7 +3351,17 @@ with tabs[7]:
     with c6:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
-    meta_gauge(recebido_meta_geral, meta_geral, meses_texto, boletos_abertos_hoje, valor_aberto_hoje, abertos_hoje)
+    meta_gauge(
+        recebido_meta_geral,
+        meta_geral,
+        meses_texto,
+        boletos_abertos_hoje,
+        valor_aberto_hoje,
+        boletos_recebidos_hoje,
+        valor_recebido_hoje,
+        abertos_hoje,
+        recebidos_hoje,
+    )
 
     region_meta_df = build_region_goal_map(meses_meta, resultados)
     region_meta_map(region_meta_df, f"% da meta por região — {meses_texto}")
