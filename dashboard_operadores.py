@@ -2162,16 +2162,16 @@ def workplan_analytics_section(workplan_view):
             size=alt.Size("valor_esperado_recuperacao:Q", title="Valor esperado", scale=alt.Scale(range=[40, 520])),
             color=alt.Color("prioridade_workplan:N", title="Prioridade", scale=alt.Scale(range=CORP_PALETTE)),
             tooltip=[
-                "agreement_no",
-                "cust_name",
-                "prioridade_workplan",
-                "probabilidade_recuperacao_br",
-                "valor_potencial_br",
-                "valor_esperado_recuperacao_br",
-                "SEGMENTO_DPD",
-                "FAIXA_ATRASO",
-                "REGIÃƒO",
-                "motivo_abordagem",
+                alt.Tooltip("agreement_no:N", title="Contrato"),
+                alt.Tooltip("cust_name:N", title="Cliente"),
+                alt.Tooltip("prioridade_workplan:N", title="Prioridade"),
+                alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance"),
+                alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
+                alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+                alt.Tooltip("SEGMENTO_DPD:N", title="Segmento"),
+                alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
+                alt.Tooltip("REGIÃƒO:N", title="Região"),
+                alt.Tooltip("motivo_abordagem:N", title="Motivo"),
             ],
         )
         .properties(height=360, title="Clientes por chance x valor potencial")
@@ -2198,11 +2198,11 @@ def workplan_analytics_section(workplan_view):
             y=alt.Y("motivo_abordagem:N", sort="-x", title=None),
             color=alt.value("#2f6f73"),
             tooltip=[
-                "motivo_abordagem",
-                "clientes_br",
-                "valor_potencial_br",
-                "valor_esperado_recuperacao_br",
-                "probabilidade_recuperacao_br",
+                alt.Tooltip("motivo_abordagem:N", title="Motivo"),
+                alt.Tooltip("clientes_br:N", title="Clientes"),
+                alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
+                alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+                alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance média"),
             ],
         )
         .properties(height=330, title="Oportunidade por motivo de abordagem")
@@ -2234,11 +2234,11 @@ def workplan_analytics_section(workplan_view):
                 y=alt.Y("SEGMENTO_DPD:N", title="Segmento DPD"),
                 color=alt.Color("valor_esperado_recuperacao:Q", scale=alt.Scale(scheme="tealblues"), title="Valor esperado"),
                 tooltip=[
-                    "SEGMENTO_DPD",
-                    "FAIXA_ATRASO",
-                    "clientes_br",
-                    "valor_esperado_recuperacao_br",
-                    "probabilidade_recuperacao_br",
+                    alt.Tooltip("SEGMENTO_DPD:N", title="Segmento"),
+                    alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
+                    alt.Tooltip("clientes_br:N", title="Clientes"),
+                    alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+                    alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance média"),
                 ],
             )
             .properties(height=320, title="Mapa de oportunidade por segmento e faixa")
@@ -2263,11 +2263,11 @@ def workplan_analytics_section(workplan_view):
             x="valor_esperado_recuperacao:Q",
             y="REGIÃƒO:N",
             tooltip=[
-                "REGIÃƒO",
-                "clientes_br",
-                "valor_potencial_br",
-                "valor_esperado_recuperacao_br",
-                "probabilidade_recuperacao_br",
+                alt.Tooltip("REGIÃƒO:N", title="Região"),
+                alt.Tooltip("clientes_br:N", title="Clientes"),
+                alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
+                alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+                alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance média"),
             ],
             title="Top regiões por valor esperado",
             height=320,
@@ -2296,7 +2296,12 @@ def workplan_analytics_section(workplan_view):
             x=alt.X("faixa_chance:N", title="Faixa de chance"),
             y=alt.Y("clientes:Q", title="Clientes"),
             color=alt.value("#b7791f"),
-            tooltip=["faixa_chance", "clientes_br", "valor_potencial_br", "valor_esperado_recuperacao_br"],
+            tooltip=[
+                alt.Tooltip("faixa_chance:N", title="Faixa de chance"),
+                alt.Tooltip("clientes_br:N", title="Clientes"),
+                alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
+                alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+            ],
         )
         .properties(height=260, title="Distribuição de clientes por chance estimada")
     )
