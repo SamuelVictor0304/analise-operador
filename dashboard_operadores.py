@@ -2144,6 +2144,165 @@ def heatmap(df, x, y, metric, title):
     st.altair_chart(chart, use_container_width=True)
 
 
+def workplan_analytics_section(workplan_view):
+    if workplan_view.empty:
+        st.info("Sem contratos nos filtros atuais para montar a visão analítica.")
+        return
+
+    st.subheader("Captação de clientes - visão analítica")
+
+    scatter_df = workplan_view.sort_values("valor_esperado_recuperacao", ascending=False).head(600).copy()
+    scatter_df = display_fields(scatter_df)
+    scatter = (
+        alt.Chart(scatter_df)
+        .mark_circle(opacity=0.72)
+        .encode(
+            x=alt.X("probabilidade_recuperacao:Q", axis=alt.Axis(format="%"), title="Chance de recuperação"),
+            y=alt.Y("valor_potencial:Q", title="Valor potencial (R$)"),
+            size=alt.Size("valor_esperado_recuperacao:Q", title="Valor esperado", scale=alt.Scale(range=[40, 520])),
+            color=alt.Color("prioridade_workplan:N", title="Prioridade", scale=alt.Scale(range=CORP_PALETTE)),
+            tooltip=[
+                "agreement_no",
+                "cust_name",
+                "prioridade_workplan",
+                "probabilidade_recuperacao_br",
+                "valor_potencial_br",
+                "valor_esperado_recuperacao_br",
+                "SEGMENTO_DPD",
+                "FAIXA_ATRASO",
+                "REGIÃƒO",
+                "motivo_abordagem",
+            ],
+        )
+        .properties(height=360, title="Clientes por chance x valor potencial")
+    )
+
+    motivo_df = (
+        workplan_view.groupby("motivo_abordagem", dropna=False)
+        .agg(
+            clientes=("CONTRATO_KEY", "nunique"),
+            valor_potencial=("valor_potencial", "sum"),
+            valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+            probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+        )
+        .reset_index()
+        .sort_values("valor_esperado_recuperacao", ascending=False)
+        .head(10)
+    )
+    motivo_display = display_fields(motivo_df)
+    motivo_chart = (
+        alt.Chart(motivo_display)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+        .encode(
+            x=alt.X("valor_esperado_recuperacao:Q", title="Valor esperado (R$)"),
+            y=alt.Y("motivo_abordagem:N", sort="-x", title=None),
+            color=alt.value("#2f6f73"),
+            tooltip=[
+                "motivo_abordagem",
+                "clientes_br",
+                "valor_potencial_br",
+                "valor_esperado_recuperacao_br",
+                "probabilidade_recuperacao_br",
+            ],
+        )
+        .properties(height=330, title="Oportunidade por motivo de abordagem")
+    )
+
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        st.altair_chart(scatter, use_container_width=True)
+    with c2:
+        st.altair_chart(motivo_chart, use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        matriz_df = (
+            workplan_view.groupby(["SEGMENTO_DPD", "FAIXA_ATRASO"], dropna=False)
+            .agg(
+                clientes=("CONTRATO_KEY", "nunique"),
+                valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+                probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+            )
+            .reset_index()
+        )
+        matriz_display = display_fields(matriz_df)
+        matriz_chart = (
+            alt.Chart(matriz_display)
+            .mark_rect()
+            .encode(
+                x=alt.X("FAIXA_ATRASO:N", title="Faixa de atraso"),
+                y=alt.Y("SEGMENTO_DPD:N", title="Segmento DPD"),
+                color=alt.Color("valor_esperado_recuperacao:Q", scale=alt.Scale(scheme="tealblues"), title="Valor esperado"),
+                tooltip=[
+                    "SEGMENTO_DPD",
+                    "FAIXA_ATRASO",
+                    "clientes_br",
+                    "valor_esperado_recuperacao_br",
+                    "probabilidade_recuperacao_br",
+                ],
+            )
+            .properties(height=320, title="Mapa de oportunidade por segmento e faixa")
+        )
+        st.altair_chart(matriz_chart, use_container_width=True)
+    with c2:
+        regiao_df = (
+            workplan_view.groupby("REGIÃƒO", dropna=False)
+            .agg(
+                clientes=("CONTRATO_KEY", "nunique"),
+                valor_potencial=("valor_potencial", "sum"),
+                valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+                probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+            )
+            .reset_index()
+            .sort_values("valor_esperado_recuperacao", ascending=False)
+            .head(12)
+        )
+        regiao_display = display_fields(regiao_df)
+        bar_chart(
+            regiao_display,
+            x="valor_esperado_recuperacao:Q",
+            y="REGIÃƒO:N",
+            tooltip=[
+                "REGIÃƒO",
+                "clientes_br",
+                "valor_potencial_br",
+                "valor_esperado_recuperacao_br",
+                "probabilidade_recuperacao_br",
+            ],
+            title="Top regiões por valor esperado",
+            height=320,
+        )
+
+    chance_df = workplan_view.copy()
+    chance_df["faixa_chance"] = pd.cut(
+        chance_df["probabilidade_recuperacao"],
+        bins=[-0.001, 0.10, 0.20, 0.35, 0.50, 0.70, 1.00],
+        labels=["0-10%", "10-20%", "20-35%", "35-50%", "50-70%", "70%+"],
+    )
+    chance_df = (
+        chance_df.groupby("faixa_chance", dropna=False)
+        .agg(
+            clientes=("CONTRATO_KEY", "nunique"),
+            valor_potencial=("valor_potencial", "sum"),
+            valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+        )
+        .reset_index()
+    )
+    chance_display = display_fields(chance_df)
+    chance_chart = (
+        alt.Chart(chance_display)
+        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .encode(
+            x=alt.X("faixa_chance:N", title="Faixa de chance"),
+            y=alt.Y("clientes:Q", title="Clientes"),
+            color=alt.value("#b7791f"),
+            tooltip=["faixa_chance", "clientes_br", "valor_potencial_br", "valor_esperado_recuperacao_br"],
+        )
+        .properties(height=260, title="Distribuição de clientes por chance estimada")
+    )
+    st.altair_chart(chance_chart, use_container_width=True)
+
+
 def display_fields(df):
     out = df.copy()
     money_cols = [
@@ -3464,6 +3623,7 @@ with tabs[8]:
     elif workplan_df.empty:
         st.info("Sem dados do Workplan para exibir.")
     else:
+        st.caption(f"Workplan carregado do banco: {num_fmt(len(workplan_raw))} contratos brutos e {num_fmt(len(workplan_df))} contratos com chave valida.")
         elegivel_df = workplan_df[
             workplan_df["pagamentos_hist"].eq(0)
             & workplan_df["acordos_em_aberto_hist"].eq(0)
@@ -3559,6 +3719,8 @@ with tabs[8]:
                 title="Valor em aberto por segmento",
                 sort=None,
             )
+
+        workplan_analytics_section(workplan_view)
 
         st.subheader("Recuperação esperada ponderada")
         st.caption("Carteira elegível x taxa de contato x taxa de CPC x taxa de acordo x taxa de pagamento x percentual médio recuperado.")
