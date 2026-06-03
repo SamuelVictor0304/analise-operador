@@ -2151,12 +2151,10 @@ def workplan_analytics_section(workplan_view):
 
     st.subheader("Captação de clientes - visão analítica")
 
-    scatter_df = workplan_view.sort_values("valor_esperado_recuperacao", ascending=False).head(600).copy()
-    scatter_df = display_fields(scatter_df)
     region_col = next(
         (
             col
-            for col in ["REGIÃO", "REGIÃƒO", "REGIÃƒÆ’O", "regiao", "uf", "state"]
+            for col in ["REGIÃO", "REGIÃƒO", "REGIÃƒÆ’O", "REGIÃƒÆ’Ã†â€™O", "regiao", "uf", "state"]
             if col in workplan_view.columns
         ),
         None,
@@ -2165,29 +2163,49 @@ def workplan_analytics_section(workplan_view):
         region_col = "_grupo_geografico"
         workplan_view = workplan_view.copy()
         workplan_view[region_col] = "Sem regiao/UF"
-        scatter_df[region_col] = "Sem regiao/UF"
-    scatter = (
-        alt.Chart(scatter_df)
-        .mark_circle(opacity=0.72)
+
+    top20_valor = workplan_view.sort_values("valor_esperado_recuperacao", ascending=False).head(20)["valor_esperado_recuperacao"].sum()
+    total_valor_esperado = workplan_view["valor_esperado_recuperacao"].sum()
+    alta_prioridade = workplan_view[workplan_view["prioridade_workplan"].eq("Alta")]
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Valor esperado", money_fmt(total_valor_esperado))
+    with c2:
+        metric_card("Top 20 contratos", money_fmt(top20_valor))
+    with c3:
+        metric_card("Prioridade alta", num_fmt(len(alta_prioridade)))
+    with c4:
+        metric_card("Chance media", pct_fmt(workplan_view["probabilidade_recuperacao"].mean()))
+
+    prioridade_resumo = (
+        workplan_view.groupby("prioridade_workplan", dropna=False)
+        .agg(
+            clientes=("CONTRATO_KEY", "nunique"),
+            valor_potencial=("valor_potencial", "sum"),
+            valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+            probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+        )
+        .reset_index()
+    )
+    prioridade_resumo["ordem_prioridade"] = prioridade_resumo["prioridade_workplan"].map({"Alta": 0, "MÃ©dia": 1, "Baixa": 2}).fillna(3)
+    prioridade_resumo = prioridade_resumo.sort_values("ordem_prioridade")
+    prioridade_display = display_fields(prioridade_resumo)
+    prioridade_chart = (
+        alt.Chart(prioridade_display)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
         .encode(
-            x=alt.X("probabilidade_recuperacao:Q", axis=alt.Axis(format="%"), title="Chance de recuperação"),
-            y=alt.Y("valor_potencial:Q", title="Valor potencial (R$)"),
-            size=alt.Size("valor_esperado_recuperacao:Q", title="Valor esperado", scale=alt.Scale(range=[40, 520])),
+            x=alt.X("valor_esperado_recuperacao:Q", title="Valor esperado (R$)"),
+            y=alt.Y("prioridade_workplan:N", sort=["Alta", "MÃ©dia", "Baixa"], title=None),
             color=alt.Color("prioridade_workplan:N", title="Prioridade", scale=alt.Scale(range=CORP_PALETTE)),
             tooltip=[
-                alt.Tooltip("agreement_no:N", title="Contrato"),
-                alt.Tooltip("cust_name:N", title="Cliente"),
                 alt.Tooltip("prioridade_workplan:N", title="Prioridade"),
-                alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance"),
-                alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
+                alt.Tooltip("clientes_br:N", title="Clientes"),
+                alt.Tooltip("valor_potencial_br:N", title="Carteira"),
                 alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
-                alt.Tooltip("SEGMENTO_DPD:N", title="Segmento"),
-                alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
-                alt.Tooltip("REGIÃƒO:N", title="Região"),
-                alt.Tooltip("motivo_abordagem:N", title="Motivo"),
+                alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance media"),
             ],
         )
-        .properties(height=360, title="Clientes por chance x valor potencial")
+        .properties(height=260, title="Valor esperado por prioridade")
     )
 
     motivo_df = (
@@ -2223,7 +2241,7 @@ def workplan_analytics_section(workplan_view):
 
     c1, c2 = st.columns([1.2, 1])
     with c1:
-        st.altair_chart(scatter, use_container_width=True)
+        st.altair_chart(prioridade_chart, use_container_width=True)
     with c2:
         st.altair_chart(motivo_chart, use_container_width=True)
 
