@@ -1294,17 +1294,28 @@ def apply_filters(eventos, resultados):
     min_event_date = min_data.date()
     max_event_date = max_data.date()
     st.sidebar.caption(f"Eventos disponiveis: {min_event_date:%d/%m/%Y} a {max_event_date:%d/%m/%Y}")
+    if "event_start_date" not in st.session_state:
+        st.session_state["event_start_date"] = min_event_date
+    if "event_end_date" not in st.session_state:
+        st.session_state["event_end_date"] = max_event_date
+    if st.session_state["event_start_date"] < min_event_date or st.session_state["event_start_date"] > max_event_date:
+        st.session_state["event_start_date"] = min_event_date
+    if st.session_state["event_end_date"] < min_event_date or st.session_state["event_end_date"] > max_event_date:
+        st.session_state["event_end_date"] = max_event_date
+
     data_inicio = st.sidebar.date_input(
         "Inicio dos eventos",
-        value=min_event_date,
         min_value=min_event_date,
         max_value=max_event_date,
+        key="event_start_date",
+        format="DD/MM/YYYY",
     )
     data_fim = st.sidebar.date_input(
         "Fim dos eventos",
-        value=max_event_date,
         min_value=min_event_date,
         max_value=max_event_date,
+        key="event_end_date",
+        format="DD/MM/YYYY",
     )
     if data_inicio > data_fim:
         st.sidebar.warning("A data inicial nao pode ser maior que a final.")
