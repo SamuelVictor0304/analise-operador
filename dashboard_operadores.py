@@ -2153,6 +2153,19 @@ def workplan_analytics_section(workplan_view):
 
     scatter_df = workplan_view.sort_values("valor_esperado_recuperacao", ascending=False).head(600).copy()
     scatter_df = display_fields(scatter_df)
+    region_col = next(
+        (
+            col
+            for col in ["REGIÃO", "REGIÃƒO", "REGIÃƒÆ’O", "regiao", "uf", "state"]
+            if col in workplan_view.columns
+        ),
+        None,
+    )
+    if region_col is None:
+        region_col = "_grupo_geografico"
+        workplan_view = workplan_view.copy()
+        workplan_view[region_col] = "Sem regiao/UF"
+        scatter_df[region_col] = "Sem regiao/UF"
     scatter = (
         alt.Chart(scatter_df)
         .mark_circle(opacity=0.72)
@@ -2246,7 +2259,7 @@ def workplan_analytics_section(workplan_view):
         st.altair_chart(matriz_chart, use_container_width=True)
     with c2:
         regiao_df = (
-            workplan_view.groupby("REGIÃƒO", dropna=False)
+            workplan_view.groupby(region_col, dropna=False)
             .agg(
                 clientes=("CONTRATO_KEY", "nunique"),
                 valor_potencial=("valor_potencial", "sum"),
@@ -2261,9 +2274,9 @@ def workplan_analytics_section(workplan_view):
         bar_chart(
             regiao_display,
             x="valor_esperado_recuperacao:Q",
-            y="REGIÃƒO:N",
+            y=f"{region_col}:N",
             tooltip=[
-                alt.Tooltip("REGIÃƒO:N", title="Região"),
+                alt.Tooltip(f"{region_col}:N", title="Regiao/UF"),
                 alt.Tooltip("clientes_br:N", title="Clientes"),
                 alt.Tooltip("valor_potencial_br:N", title="Valor potencial"),
                 alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
