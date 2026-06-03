@@ -1291,14 +1291,25 @@ def apply_filters(eventos, resultados):
 
     min_data = eventos["DATA"].min()
     max_data = eventos["DATA"].max()
-    data_range = st.sidebar.date_input(
-        "Período dos eventos",
-        value=(min_data.date(), max_data.date()),
-        min_value=min_data.date(),
-        max_value=max_data.date(),
+    min_event_date = min_data.date()
+    max_event_date = max_data.date()
+    st.sidebar.caption(f"Eventos disponiveis: {min_event_date:%d/%m/%Y} a {max_event_date:%d/%m/%Y}")
+    data_inicio = st.sidebar.date_input(
+        "Inicio dos eventos",
+        value=min_event_date,
+        min_value=min_event_date,
+        max_value=max_event_date,
     )
-    if isinstance(data_range, tuple) and len(data_range) == 2:
-        inicio, fim = pd.Timestamp(data_range[0]), pd.Timestamp(data_range[1]) + pd.Timedelta(days=1)
+    data_fim = st.sidebar.date_input(
+        "Fim dos eventos",
+        value=max_event_date,
+        min_value=min_event_date,
+        max_value=max_event_date,
+    )
+    if data_inicio > data_fim:
+        st.sidebar.warning("A data inicial nao pode ser maior que a final.")
+    else:
+        inicio, fim = pd.Timestamp(data_inicio), pd.Timestamp(data_fim) + pd.Timedelta(days=1)
         eventos = eventos[(eventos["DATA"].isna()) | ((eventos["DATA"] >= inicio) & (eventos["DATA"] < fim))]
 
     if operador_sel:
