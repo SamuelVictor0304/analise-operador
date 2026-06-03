@@ -2245,6 +2245,64 @@ def workplan_analytics_section(workplan_view):
     with c2:
         st.altair_chart(motivo_chart, use_container_width=True)
 
+    st.markdown("#### Exportar clientes por prioridade")
+    export_prioridades = st.multiselect(
+        "Prioridade para exportar",
+        ["Alta", "MÃƒÂ©dia", "Baixa"],
+        default=["Alta"],
+        key="workplan_export_prioridades",
+    )
+    motivos_opcoes = motivo_df["motivo_abordagem"].dropna().tolist()
+    export_motivos = st.multiselect(
+        "Motivo de abordagem para exportar",
+        motivos_opcoes,
+        default=[],
+        key="workplan_export_motivos",
+    )
+    export_clientes = workplan_view.copy()
+    if export_prioridades:
+        export_clientes = export_clientes[export_clientes["prioridade_workplan"].isin(export_prioridades)]
+    if export_motivos:
+        export_clientes = export_clientes[export_clientes["motivo_abordagem"].isin(export_motivos)]
+    export_clientes = export_clientes.sort_values(["valor_esperado_recuperacao", "score_recuperacao"], ascending=False)
+    export_cols = [
+        "agreement_no",
+        "cust_name",
+        "cpf_cnpj",
+        "prioridade_workplan",
+        "motivo_abordagem",
+        "probabilidade_recuperacao",
+        "valor_potencial",
+        "valor_esperado_recuperacao",
+        "score_recuperacao",
+        "SEGMENTO_DPD",
+        "FAIXA_ATRASO",
+        region_col,
+        "uf",
+        "dpd",
+        "dias_sem_contato",
+        "acionamentos_hist",
+        "cpcs_hist",
+        "acordos_hist",
+        "pagamentos_hist",
+        "status_base",
+        "status_cpc",
+        "city",
+        "state",
+    ]
+    export_cols = [col for col in export_cols if col in export_clientes.columns]
+    cexp1, cexp2 = st.columns([1, 2])
+    with cexp1:
+        metric_card("Clientes no export", num_fmt(len(export_clientes)))
+    with cexp2:
+        st.download_button(
+            "Baixar clientes filtrados (.xlsx)",
+            data=dataframe_to_excel_bytes(export_clientes[export_cols], sheet_name="Clientes"),
+            file_name="clientes_prioridade_workplan.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            disabled=export_clientes.empty,
+        )
+
     c1, c2 = st.columns(2)
     with c1:
         matriz_df = (
