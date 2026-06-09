@@ -408,7 +408,7 @@ def office_goal_for_resultados(resultados):
 
 
 def office_goal_for_months(months):
-    metas_gerais = load_office_goals()
+    metas_gerais = load_office_goals(file_version(RESULTADOS_FILE))
     selected_goals = [metas_gerais.get(normalize_month_key(mes), 0) for mes in months]
     positive_goals = [goal for goal in selected_goals if goal > 0]
     if positive_goals:
@@ -464,7 +464,7 @@ def load_collaborators():
 
 
 @st.cache_data(show_spinner=False)
-def load_office_goals():
+def load_office_goals(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
     if len(header_idx) == 0:
@@ -506,7 +506,7 @@ def load_office_goals():
 
 
 @st.cache_data(show_spinner=False)
-def load_office_received():
+def load_office_received(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
     if len(header_idx) == 0:
@@ -547,7 +547,7 @@ def load_office_received():
 
 
 @st.cache_data(show_spinner=False)
-def load_region_goals():
+def load_region_goals(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
     if len(header_idx) == 0:
@@ -600,7 +600,7 @@ def load_region_goals():
 
 
 def build_region_goal_map(months, resultados=None):
-    region_goals = load_region_goals()
+    region_goals = load_region_goals(file_version(RESULTADOS_FILE))
     if region_goals.empty:
         return region_goals
 
