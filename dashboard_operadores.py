@@ -2006,7 +2006,7 @@ def meta_gauge(
             padding: 7px 10px;
             border-bottom: 1px solid rgba(125, 211, 252, .18);
             color: rgba(255,255,255,.86);
-            font-size: .76rem;
+            font-size: .82rem;
             font-weight: 800;
             text-align: center;
             text-transform: uppercase;
@@ -2014,7 +2014,7 @@ def meta_gauge(
         .meta-panel__value {{
             padding: 12px 10px;
             text-align: center;
-            font-size: .98rem;
+            font-size: 1.08rem;
             font-weight: 750;
         }}
         .meta-panel__daily-row {{
@@ -2040,7 +2040,7 @@ def meta_gauge(
             padding: 0 10px 10px;
             text-align: center;
             color: rgba(255,255,255,.78);
-            font-size: .76rem;
+            font-size: .84rem;
             font-weight: 700;
         }}
         .meta-tooltip {{
