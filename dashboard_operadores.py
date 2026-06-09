@@ -1173,7 +1173,7 @@ def load_data(data_version):
     resultados = pd.read_excel(
         RESULTADOS_FILE,
         sheet_name="BASE",
-        usecols=[0, 1, 5, 7, 8, 9, 11, 12, 15, 16, 19, 20, 22, 24, 25],
+        usecols=[0, 1, 5, 6, 7, 8, 9, 11, 12, 15, 16, 19, 20, 22, 24, 25],
     )
 
     eventos.columns = [normalize_text(c).upper() for c in eventos.columns]
@@ -1228,6 +1228,11 @@ def load_data(data_version):
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
+    honorarios_col = next((col for col in resultados.columns if "HONOR" in normalize_status(col)), None)
+    if honorarios_col:
+        resultados["HONORARIOS_ESCRITORIO_BASE"] = pd.to_numeric(resultados[honorarios_col], errors="coerce").fillna(0)
+    else:
+        resultados["HONORARIOS_ESCRITORIO_BASE"] = 0.0
     resultados["DPD"] = pd.to_numeric(resultados["DPD"], errors="coerce")
     resultados["FAIXA_ATRASO"] = resultados["DPD"].map(atraso_faixa)
     resultados["SEGMENTO_DPD"] = resultados["DPD FORMULA"].map(segmento_dpd)
@@ -1241,6 +1246,7 @@ def load_data(data_version):
     resultados["IS_NAO_PAGOU"] = resultados["STATUS_KEY"].eq("NAO PAGOU")
     resultados["IS_PAGO"] = resultados["STATUS_KEY"].eq("PAGOU") | (resultados["DATA_PAGAMENTO"].notna())
     resultados["VALOR_PAGO"] = np.where(resultados["IS_PAGO"], resultados["VALOR_NEGOCIADO"], 0)
+    resultados["HONORARIOS_ESCRITORIO"] = np.where(resultados["IS_PAGO"], resultados["HONORARIOS_ESCRITORIO_BASE"], 0)
     resultados["VALOR_EM_ABERTO"] = np.where(resultados["IS_EM_ABERTO"], resultados["VALOR_NEGOCIADO"], 0)
     resultados["VALOR_NAO_PAGOU"] = np.where(resultados["IS_NAO_PAGOU"], resultados["VALOR_NEGOCIADO"], 0)
     resultados["MES_RESULTADO"] = resultados["MÊS"].map(normalize_text).str.upper()
@@ -2612,6 +2618,8 @@ def dataframe_to_excel_bytes(df, sheet_name="Workplan", extra_sheets=None):
         "recuperacao_esperada",
         "valor_potencial",
         "valor_esperado_recuperacao",
+        "honorarios_escritorio",
+        "HONORARIOS_ESCRITORIO",
     }
     pct_cols = {
         "tx_contato",
@@ -3602,6 +3610,7 @@ with tabs[7]:
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
+    honorarios_escritorio = resultados["HONORARIOS_ESCRITORIO"].sum()
     valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
     hoje = pd.Timestamp.today().normalize()
     abertos_hoje = resultados[resultados["IS_EM_ABERTO"] & resultados["DATA_VENCIMENTO"].dt.normalize().eq(hoje)]
@@ -3612,18 +3621,20 @@ with tabs[7]:
     valor_recebido_hoje = recebidos_hoje["VALOR_PAGO"].sum()
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
         metric_card("Mês analisado", meses_texto)
     with c2:
         metric_card("Meta geral escritório", money_fmt(meta_geral))
     with c3:
-        metric_card("Recebido", money_fmt(recebido_meta_geral))
+        metric_card("Honorarios escritorio", money_fmt(honorarios_escritorio))
     with c4:
-        metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
+        metric_card("Recebido", money_fmt(recebido_meta_geral))
     with c5:
-        metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
+        metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
     with c6:
+        metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
+    with c7:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
     meta_gauge(
