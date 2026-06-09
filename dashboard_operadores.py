@@ -1885,6 +1885,32 @@ def meta_progress_color(pct):
     return blend_hex("#1f7a4d", "#72d391", (pct - 0.80) / 0.20)
 
 
+def business_day_clock_ratio(month_labels, today=None):
+    today = (today or pd.Timestamp.today()).normalize()
+    month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
+    selected_months = []
+    for label in month_labels or []:
+        month_num = month_lookup.get(normalize_status(label))
+        if month_num:
+            selected_months.append(month_num)
+    if not selected_months:
+        selected_months = [today.month]
+
+    elapsed_days = 0
+    total_days = 0
+    for month_num in selected_months:
+        month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
+        month_end = month_start + pd.offsets.MonthEnd(0)
+        month_business_days = pd.bdate_range(month_start, month_end)
+        total_days += len(month_business_days)
+        if month_num < today.month:
+            elapsed_days += len(month_business_days)
+        elif month_num == today.month:
+            elapsed_days += len(month_business_days[month_business_days <= today])
+
+    return scalar_safe_div(elapsed_days, total_days)
+
+
 def meta_gauge(
     value,
     target,
@@ -1893,6 +1919,10 @@ def meta_gauge(
     open_today_value,
     paid_today_count,
     paid_today_value,
+    avg_paid_ticket=0,
+    clock_target=0,
+    clock_gap=0,
+    clock_ratio=0,
     open_today_rows=None,
     paid_today_rows=None,
     title="Recebimento Total",
@@ -1903,6 +1933,10 @@ def meta_gauge(
     open_today_value = 0 if pd.isna(open_today_value) else float(open_today_value)
     paid_today_count = 0 if pd.isna(paid_today_count) else int(paid_today_count)
     paid_today_value = 0 if pd.isna(paid_today_value) else float(paid_today_value)
+    avg_paid_ticket = 0 if pd.isna(avg_paid_ticket) else float(avg_paid_ticket)
+    clock_target = 0 if pd.isna(clock_target) else float(clock_target)
+    clock_gap = 0 if pd.isna(clock_gap) else float(clock_gap)
+    clock_ratio = 0 if pd.isna(clock_ratio) else float(clock_ratio)
     if target <= 0:
         st.info("Sem meta geral cadastrada para montar o indicador.")
         return
@@ -1910,6 +1944,8 @@ def meta_gauge(
     gap = max(target - value, 0)
     progress = min(max(value / target, 0), 1)
     pct_target = value / target if target else 0
+    clock_status = "Dentro" if value >= clock_target else "Abaixo"
+    clock_status_color = "#9ee7ef" if value >= clock_target else "#fbbf24"
     color = meta_progress_color(pct_target)
     open_today_rows = open_today_rows if open_today_rows is not None else pd.DataFrame()
     if open_today_rows.empty:
@@ -1947,9 +1983,9 @@ def meta_gauge(
         f"""
         <style>
         .meta-panel__side {{
-            width: 190px;
-            display: flex;
-            flex-direction: column;
+            width: 390px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
         }}
         .meta-panel__card {{
@@ -1970,9 +2006,9 @@ def meta_gauge(
             text-transform: uppercase;
         }}
         .meta-panel__value {{
-            padding: 10px 10px;
+            padding: 12px 10px;
             text-align: center;
-            font-size: 1.02rem;
+            font-size: .98rem;
             font-weight: 750;
         }}
         .meta-panel__daily-row {{
@@ -1993,6 +2029,13 @@ def meta_gauge(
             text-align: center;
             color: #9ee7ef;
             font-weight: 760;
+        }}
+        .meta-panel__subvalue {{
+            padding: 0 10px 10px;
+            text-align: center;
+            color: rgba(255,255,255,.78);
+            font-size: .76rem;
+            font-weight: 700;
         }}
         .meta-tooltip {{
             display: none;
@@ -2041,8 +2084,8 @@ def meta_gauge(
             font-size: .8rem;
         }}
         </style>
-        <div style="border:1px solid rgba(47,111,115,.55);border-radius:8px;padding:12px 14px;background:rgba(15,23,42,.10);max-width:940px;margin:12px auto 18px;">
-            <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;">
+        <div style="border:1px solid rgba(47,111,115,.55);border-radius:8px;padding:12px 14px;background:rgba(15,23,42,.10);max-width:1120px;margin:12px auto 18px;">
+            <div style="display:grid;grid-template-columns:minmax(0, 1fr) auto;gap:18px;align-items:start;">
                 <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
                         <div style="color:#ffffff;font-size:1.65rem;font-weight:650;line-height:1.1;">{escape(title)}</div>
@@ -2062,6 +2105,15 @@ def meta_gauge(
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">GAP</div>
                         <div class="meta-panel__value">{escape(money_fmt(gap))}</div>
+                    </div>
+                    <div class="meta-panel__card">
+                        <div class="meta-panel__card-title">Meta relogio</div>
+                        <div class="meta-panel__value">{escape(money_fmt(clock_target))}</div>
+                        <div class="meta-panel__subvalue" style="color:{clock_status_color};">{escape(clock_status)} | falta {escape(money_fmt(clock_gap))}</div>
+                    </div>
+                    <div class="meta-panel__card">
+                        <div class="meta-panel__card-title">Ticket medio</div>
+                        <div class="meta-panel__value">{escape(money_fmt(avg_paid_ticket))}</div>
                     </div>
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Hoje</div>
@@ -3619,7 +3671,11 @@ with tabs[7]:
     recebidos_hoje = resultados[resultados["IS_PAGO"] & resultados["DATA_PAGAMENTO"].dt.normalize().eq(hoje)]
     boletos_recebidos_hoje = len(recebidos_hoje)
     valor_recebido_hoje = recebidos_hoje["VALOR_PAGO"].sum()
+    ticket_medio_recebimento = scalar_safe_div(recebido_meta_geral, resultados["IS_PAGO"].sum())
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
+    meta_relogio_pct = business_day_clock_ratio(meses_meta, hoje)
+    meta_relogio_valor = meta_geral * meta_relogio_pct
+    gap_meta_relogio = max(meta_relogio_valor - recebido_meta_geral, 0)
 
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
@@ -3645,6 +3701,10 @@ with tabs[7]:
         valor_aberto_hoje,
         boletos_recebidos_hoje,
         valor_recebido_hoje,
+        ticket_medio_recebimento,
+        meta_relogio_valor,
+        gap_meta_relogio,
+        meta_relogio_pct,
         abertos_hoje,
         recebidos_hoje,
     )
