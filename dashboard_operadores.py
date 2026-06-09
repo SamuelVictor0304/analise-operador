@@ -1920,6 +1920,9 @@ def meta_gauge(
     paid_today_count,
     paid_today_value,
     avg_paid_ticket=0,
+    pos_paid_value=0,
+    pos_paid_value_pct=0,
+    pos_paid_count_pct=0,
     clock_target=0,
     clock_gap=0,
     clock_ratio=0,
@@ -1934,6 +1937,9 @@ def meta_gauge(
     paid_today_count = 0 if pd.isna(paid_today_count) else int(paid_today_count)
     paid_today_value = 0 if pd.isna(paid_today_value) else float(paid_today_value)
     avg_paid_ticket = 0 if pd.isna(avg_paid_ticket) else float(avg_paid_ticket)
+    pos_paid_value = 0 if pd.isna(pos_paid_value) else float(pos_paid_value)
+    pos_paid_value_pct = 0 if pd.isna(pos_paid_value_pct) else float(pos_paid_value_pct)
+    pos_paid_count_pct = 0 if pd.isna(pos_paid_count_pct) else float(pos_paid_count_pct)
     clock_target = 0 if pd.isna(clock_target) else float(clock_target)
     clock_gap = 0 if pd.isna(clock_gap) else float(clock_gap)
     clock_ratio = 0 if pd.isna(clock_ratio) else float(clock_ratio)
@@ -2114,6 +2120,8 @@ def meta_gauge(
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Ticket medio</div>
                         <div class="meta-panel__value">{escape(money_fmt(avg_paid_ticket))}</div>
+                        <div class="meta-panel__subvalue">Pos retomada: {escape(pct_fmt(pos_paid_value_pct))} do recebido</div>
+                        <div class="meta-panel__subvalue">{escape(money_fmt(pos_paid_value))} | {escape(pct_fmt(pos_paid_count_pct))} dos acordos</div>
                     </div>
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Hoje</div>
@@ -3671,7 +3679,12 @@ with tabs[7]:
     recebidos_hoje = resultados[resultados["IS_PAGO"] & resultados["DATA_PAGAMENTO"].dt.normalize().eq(hoje)]
     boletos_recebidos_hoje = len(recebidos_hoje)
     valor_recebido_hoje = recebidos_hoje["VALOR_PAGO"].sum()
-    ticket_medio_recebimento = scalar_safe_div(recebido_meta_geral, resultados["IS_PAGO"].sum())
+    pagamentos_total = resultados["IS_PAGO"].sum()
+    ticket_medio_recebimento = scalar_safe_div(recebido_meta_geral, pagamentos_total)
+    pagos_pos_retomada = resultados[resultados["IS_PAGO"] & resultados["CAMPANHA"].map(is_pos_retomado)]
+    valor_pos_retomada = pagos_pos_retomada["VALOR_PAGO"].sum()
+    pct_acordos_pos_retomada = scalar_safe_div(len(pagos_pos_retomada), pagamentos_total)
+    pct_recebido_pos_retomada = scalar_safe_div(valor_pos_retomada, recebido_meta_geral)
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
     meta_relogio_pct = business_day_clock_ratio(meses_meta, hoje)
     meta_relogio_valor = meta_geral * meta_relogio_pct
@@ -3702,6 +3715,9 @@ with tabs[7]:
         boletos_recebidos_hoje,
         valor_recebido_hoje,
         ticket_medio_recebimento,
+        valor_pos_retomada,
+        pct_recebido_pos_retomada,
+        pct_acordos_pos_retomada,
         meta_relogio_valor,
         gap_meta_relogio,
         meta_relogio_pct,
