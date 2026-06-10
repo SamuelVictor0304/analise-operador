@@ -19,10 +19,11 @@ RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ("mauricio",)
-DEFAULT_OPERATOR_GOAL = 150000
-POST_REPOSSESSED_GOAL = 730000
+DEFAULT_OPERATOR_GOAL = 200000
+POST_REPOSSESSED_GOAL = 770000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
-IGNORED_META_OPERATORS = {"luiz.mauro"}
+IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
+ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
 DEFAULT_RESULT_MONTH = "JUNHO"
 POSTGRES_DEFAULTS = {
     "host": "",
@@ -189,7 +190,7 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 150 mil; Victor Lima usa R$ 730 mil de pós retomado."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 200 mil; Victor Lima usa R$ 770 mil de pós retomado."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
     "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
@@ -812,6 +813,22 @@ def region_meta_map(region_df, title):
 
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     colaboradores = load_collaborators()
+    missing_negotiators = ALWAYS_INCLUDED_NEGOTIATORS - set(colaboradores["OPERADOR"].dropna())
+    if missing_negotiators:
+        colaboradores = pd.concat(
+            [
+                colaboradores,
+                pd.DataFrame(
+                    {
+                        "OPERADOR": sorted(missing_negotiators),
+                        "nome_colaborador": sorted(missing_negotiators),
+                        "base_colaborador": "MANUAL",
+                        "cargo_colaborador": "NEGOCIADOR",
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
     if operadores_scope:
         colaboradores = colaboradores[colaboradores["OPERADOR"].isin(operadores_scope)].copy()
     meses = selected_months(resultados)
@@ -3666,7 +3683,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 150.000 por negociador; Victor Lima usa a meta individual de R$ 730.000 referente aos casos de pós retomado.")
+    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 200.000 por negociador; Victor Lima usa a meta individual de R$ 770.000 referente aos casos de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
