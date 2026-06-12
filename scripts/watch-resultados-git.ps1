@@ -41,7 +41,7 @@ function Wait-FileStable {
         $canRead = $false
 
         try {
-            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             $stream.Close()
             $canRead = $true
         }
