@@ -101,7 +101,7 @@ function Commit-Resultados {
     }
     catch {
         Write-Log "Push falhou. Tentando rebase antes de reenviar."
-        Invoke-Git -GitArgs @("pull", "--rebase", $Remote, $Branch) | Out-Null
+        Invoke-Git -GitArgs @("pull", "--rebase", "--autostash", $Remote, $Branch) | Out-Null
         Invoke-Git -GitArgs @("push", $Remote, $Branch) | Out-Null
         Write-Log "Commit enviado para $Remote/$Branch apos rebase."
     }
