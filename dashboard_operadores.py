@@ -132,6 +132,8 @@ FIELD_HELP = {
     "risco_quebra_perfil": ("Risco quebra perfil", "Acordos não pagos divididos por acordos históricos do perfil semelhante."),
     "motivo_abordagem": ("Motivo abordagem", "Motivo prático sugerido para abordar ou priorizar o cliente."),
     "motivo_priorizacao": ("Motivo priorização", "Principais fatores que aumentaram a prioridade do contrato."),
+    "inadimplencia_precoce_tipo": ("FPD/EPD", "Classificacao por primeira parcela nao paga: FPD na 1a parcela, EPD na 5a parcela e demais casos separados."),
+    "no_first_ins_unpaid": ("Primeira parcela nao paga", "Numero da primeira parcela em atraso/nao paga usado para identificar FPD e EPD."),
     "cpf_cnpj": ("CPF/CNPJ", "Documento do cliente conforme Workplan."),
     "PRODUTO": ("Produto", "Produto/carteira localizado no histórico de contratos."),
     "total_amount_due": ("Valor em aberto", "Valor total em aberto do contrato no Workplan."),
@@ -322,6 +324,28 @@ def is_pos_retomado(value):
     text = normalized_upper(value)
     compact = re.sub(r"[^A-Z0-9]", "", text)
     return compact in {"POSRETOMADO", "POSTRETOMADO", "POSRETOMADA", "POSTRETOMADA"}
+
+
+def parse_installment_number(value):
+    if pd.isna(value):
+        return np.nan
+    text = normalize_text(value)
+    if not text:
+        return np.nan
+    match = re.search(r"\d+", text)
+    return float(match.group(0)) if match else np.nan
+
+
+def early_default_type(value):
+    installment = pd.to_numeric(value, errors="coerce")
+    if pd.isna(installment) or installment <= 0:
+        return "Demais"
+    installment = int(installment)
+    if installment == 1:
+        return "FPD"
+    if installment == 5:
+        return "EPD"
+    return "Demais"
 
 
 def streamlit_secret_section(name):
@@ -1060,6 +1084,7 @@ def load_workplan():
     df["total_amount_due"] = pd.to_numeric(df["total_amount_due"], errors="coerce").fillna(0)
     df["pct_of_margin_money"] = pd.to_numeric(df["pct_of_margin_money"], errors="coerce")
     df["no_first_ins_unpaid"] = pd.to_numeric(df["no_first_ins_unpaid"], errors="coerce")
+    df["inadimplencia_precoce_tipo"] = df["no_first_ins_unpaid"].map(early_default_type)
     for col in ["last_contact_date", "allocation_date", "last_marking_date"]:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     df["SEGMENTO_DPD"] = df["dpd"].map(segmento_dpd)
@@ -1084,13 +1109,19 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     ).reset_index()
     eventos_perfil_cols = ["CONTRATO_KEY"] + [col for col in ["PRODUTO"] if col in eventos_hist.columns]
     eventos_perfil = eventos_hist[eventos_perfil_cols].dropna(subset=["CONTRATO_KEY"]).drop_duplicates("CONTRATO_KEY")
-    resultados_contrato = resultados_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+    resultados_early = resultados_hist.copy()
+    if "PARCELA_NUM" in resultados_early.columns:
+        resultados_early["PARCELA_NAO_PAGA_NUM"] = resultados_early["PARCELA_NUM"].where(resultados_early["IS_NAO_PAGOU"])
+    else:
+        resultados_early["PARCELA_NAO_PAGA_NUM"] = np.nan
+    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True).agg(
         acordos_hist=("CONTRATO_KEY", "count"),
         pagamentos_hist=("IS_PAGO", "sum"),
         acordos_em_aberto_hist=("IS_EM_ABERTO", "sum"),
         acordos_nao_pagou_hist=("IS_NAO_PAGOU", "sum"),
         valor_negociado_hist=("VALOR_NEGOCIADO", "sum"),
         valor_pago_hist=("VALOR_PAGO", "sum"),
+        primeira_parcela_nao_paga_hist=("PARCELA_NAO_PAGA_NUM", "min"),
     ).reset_index()
 
     df = workplan.merge(eventos_contrato, on="CONTRATO_KEY", how="left")
@@ -1105,9 +1136,15 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
         "acordos_nao_pagou_hist",
         "valor_negociado_hist",
         "valor_pago_hist",
+        "primeira_parcela_nao_paga_hist",
     ]
     for col in fill_zero:
         df[col] = df[col].fillna(0)
+    historico_precoce = df["primeira_parcela_nao_paga_hist"].map(early_default_type)
+    df["inadimplencia_precoce_tipo"] = df["inadimplencia_precoce_tipo"].where(
+        df["inadimplencia_precoce_tipo"].ne("Demais"),
+        historico_precoce,
+    )
 
     ultimo_contato = df[["last_contact_date", "ultimo_acionamento"]].max(axis=1)
     hoje = pd.Timestamp.today().normalize()
@@ -1136,6 +1173,25 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
         df["flag_cobravel"].eq("SIM"),
         df["probabilidade_recuperacao"],
         df["probabilidade_recuperacao"] * 0.35,
+    )
+    df["ajuste_fpd_epd"] = np.select(
+        [
+            df["inadimplencia_precoce_tipo"].eq("FPD"),
+            df["inadimplencia_precoce_tipo"].eq("EPD"),
+        ],
+        [0.45, 0.75],
+        default=1.0,
+    )
+    df["probabilidade_recuperacao"] = (df["probabilidade_recuperacao"] * df["ajuste_fpd_epd"]).clip(lower=0, upper=1)
+    df["probabilidade_recuperacao"] = np.where(
+        df["inadimplencia_precoce_tipo"].eq("FPD"),
+        np.minimum(df["probabilidade_recuperacao"], 0.25),
+        df["probabilidade_recuperacao"],
+    )
+    df["probabilidade_recuperacao"] = np.where(
+        df["inadimplencia_precoce_tipo"].eq("EPD"),
+        np.minimum(df["probabilidade_recuperacao"], 0.50),
+        df["probabilidade_recuperacao"],
     )
 
     df["valor_potencial"] = df["total_amount_due"].fillna(0)
@@ -1190,7 +1246,7 @@ def load_data(data_version):
     resultados = pd.read_excel(
         RESULTADOS_FILE,
         sheet_name="BASE",
-        usecols=[0, 1, 5, 6, 7, 8, 9, 11, 12, 15, 16, 19, 20, 22, 24, 25],
+        usecols=[0, 1, 3, 5, 6, 7, 8, 9, 11, 12, 15, 16, 19, 20, 22, 24, 25],
     )
 
     eventos.columns = [normalize_text(c).upper() for c in eventos.columns]
@@ -1245,6 +1301,7 @@ def load_data(data_version):
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
+    resultados["PARCELA_NUM"] = resultados["PARCELA"].map(parse_installment_number)
     honorarios_col = next((col for col in resultados.columns if "HONOR" in normalize_status(col)), None)
     if honorarios_col:
         resultados["HONORARIOS_ESCRITORIO_BASE"] = pd.to_numeric(resultados[honorarios_col], errors="coerce").fillna(0)
@@ -1591,12 +1648,18 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
     profile_aggs["ultimo_acionamento_base"] = ("DATA", "max")
     hist = hist.groupby("CONTRATO_KEY", dropna=True).agg(**profile_aggs).reset_index()
 
-    resultados_contrato = resultados_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+    resultados_early = resultados_hist.copy()
+    if "PARCELA_NUM" in resultados_early.columns:
+        resultados_early["PARCELA_NAO_PAGA_NUM"] = resultados_early["PARCELA_NUM"].where(resultados_early["IS_NAO_PAGOU"])
+    else:
+        resultados_early["PARCELA_NAO_PAGA_NUM"] = np.nan
+    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True).agg(
         acordos_hist_base=("CONTRATO_KEY", "count"),
         pagamentos_hist_base=("IS_PAGO", "sum"),
         acordos_nao_pagou_hist_base=("IS_NAO_PAGOU", "sum"),
         valor_negociado_hist_base=("VALOR_NEGOCIADO", "sum"),
         valor_pago_hist_base=("VALOR_PAGO", "sum"),
+        primeira_parcela_nao_paga_hist=("PARCELA_NAO_PAGA_NUM", "min"),
     ).reset_index()
     hist = hist.merge(resultados_contrato, on="CONTRATO_KEY", how="left")
     for col in [
@@ -1605,9 +1668,11 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
         "acordos_nao_pagou_hist_base",
         "valor_negociado_hist_base",
         "valor_pago_hist_base",
+        "primeira_parcela_nao_paga_hist",
     ]:
         hist[col] = hist[col].fillna(0)
 
+    hist["inadimplencia_precoce_tipo"] = hist["primeira_parcela_nao_paga_hist"].map(early_default_type)
     hist["flag_cpc_perfil"] = np.where(hist["cpcs_hist_base"] > 0, "SIM", "NAO")
     valor_historico = pd.to_numeric(hist["valor_negociado_hist_base"], errors="coerce").fillna(0)
     if "TOTAL ABERTO" in hist.columns:
@@ -1624,6 +1689,9 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
         hist["uf"] = hist["UF"]
 
     profile_sets = [
+        ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "PRODUTO", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
+        ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa"],
+        ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "flag_cpc_perfil"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "PRODUTO", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "flag_cpc_perfil"],
@@ -1722,6 +1790,10 @@ def apply_recovery_profile_rates(workplan_df, profile_rates, global_rates):
 
 def abordagem_workplan(row):
     reasons = []
+    if row.get("inadimplencia_precoce_tipo") == "FPD":
+        reasons.append("FPD: baixa propensao, cobrar com menor intensidade")
+    elif row.get("inadimplencia_precoce_tipo") == "EPD":
+        reasons.append("EPD: validar historico antes de priorizar")
     if row.get("cpcs_hist", 0) > 0 and row.get("acordos_hist", 0) <= 0:
         reasons.append("CPC recente sem acordo")
     if row.get("total_amount_due", 0) >= row.get("valor_alto_limite", 0) and row.get("dias_sem_contato", 0) >= 30:
@@ -2328,6 +2400,38 @@ def workplan_analytics_section(workplan_view):
     with c2:
         st.altair_chart(motivo_chart, use_container_width=True)
 
+    if "inadimplencia_precoce_tipo" in workplan_view.columns:
+        fpd_epd_df = (
+            workplan_view.groupby("inadimplencia_precoce_tipo", dropna=False)
+            .agg(
+                clientes=("CONTRATO_KEY", "nunique"),
+                valor_potencial=("valor_potencial", "sum"),
+                valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
+                probabilidade_recuperacao=("probabilidade_recuperacao", "mean"),
+            )
+            .reset_index()
+        )
+        fpd_epd_df["ordem_fpd_epd"] = fpd_epd_df["inadimplencia_precoce_tipo"].map({"Demais": 0, "EPD": 1, "FPD": 2}).fillna(3)
+        fpd_epd_display = display_fields(fpd_epd_df.sort_values("ordem_fpd_epd"))
+        fpd_epd_chart = (
+            alt.Chart(fpd_epd_display)
+            .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+            .encode(
+                x=alt.X("valor_esperado_recuperacao:Q", title="Valor esperado (R$)"),
+                y=alt.Y("inadimplencia_precoce_tipo:N", sort=["Demais", "EPD", "FPD"], title=None),
+                color=alt.Color("inadimplencia_precoce_tipo:N", title="FPD/EPD", scale=alt.Scale(range=CORP_PALETTE)),
+                tooltip=[
+                    alt.Tooltip("inadimplencia_precoce_tipo:N", title="Tipo"),
+                    alt.Tooltip("clientes_br:N", title="Clientes"),
+                    alt.Tooltip("valor_potencial_br:N", title="Carteira"),
+                    alt.Tooltip("valor_esperado_recuperacao_br:N", title="Valor esperado"),
+                    alt.Tooltip("probabilidade_recuperacao_br:N", title="Chance media"),
+                ],
+            )
+            .properties(height=190, title="Probabilidade e valor esperado por FPD/EPD")
+        )
+        st.altair_chart(fpd_epd_chart, use_container_width=True)
+
     st.markdown("#### Exportar clientes por prioridade")
     export_prioridades = st.multiselect(
         "Prioridade para exportar",
@@ -2354,6 +2458,8 @@ def workplan_analytics_section(workplan_view):
         "cpf_cnpj",
         "prioridade_workplan",
         "motivo_abordagem",
+        "inadimplencia_precoce_tipo",
+        "no_first_ins_unpaid",
         "probabilidade_recuperacao",
         "valor_potencial",
         "valor_esperado_recuperacao",
@@ -3853,11 +3959,14 @@ with tabs[8]:
 
         prioridade_sel = st.multiselect("Prioridade Workplan", ["Alta", "Média", "Baixa"], default=["Alta", "Média"])
         segmento_sel = st.multiselect("Segmento Workplan", ["POTLOSS", "SALVAGE", "SALVAGE +"])
+        fpd_epd_sel = st.multiselect("FPD/EPD", ["Demais", "EPD", "FPD"], default=["Demais", "EPD"])
         workplan_view = base_workplan.copy()
         if prioridade_sel:
             workplan_view = workplan_view[workplan_view["prioridade_workplan"].isin(prioridade_sel)]
         if segmento_sel:
             workplan_view = workplan_view[workplan_view["SEGMENTO_DPD"].isin(segmento_sel)]
+        if fpd_epd_sel:
+            workplan_view = workplan_view[workplan_view["inadimplencia_precoce_tipo"].isin(fpd_epd_sel)]
 
         c1, c2 = st.columns(2)
         with c1:
@@ -4032,6 +4141,8 @@ with tabs[8]:
                 "recuperacao_media_perfil",
                 "risco_quebra_perfil",
                 "motivo_abordagem",
+                "inadimplencia_precoce_tipo",
+                "no_first_ins_unpaid",
                 "SEGMENTO_DPD",
                 "FAIXA_ATRASO",
                 "REGIÃO",
@@ -4076,6 +4187,8 @@ with tabs[8]:
             "recuperacao_media_perfil",
             "risco_quebra_perfil",
             "motivo_abordagem",
+            "inadimplencia_precoce_tipo",
+            "no_first_ins_unpaid",
             "SEGMENTO_DPD",
             "FAIXA_ATRASO",
             "REGIÃO",
