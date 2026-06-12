@@ -64,8 +64,16 @@ function Wait-FileStable {
 
 function Invoke-Git {
     param([string[]]$GitArgs)
-    $output = & git @GitArgs 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & git @GitArgs 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    if ($exitCode -ne 0) {
         throw "git $($GitArgs -join ' ') falhou:`n$output"
     }
     return $output
