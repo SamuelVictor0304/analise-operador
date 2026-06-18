@@ -2134,6 +2134,12 @@ def meta_gauge(
             font-size: .84rem;
             font-weight: 700;
         }}
+        .meta-panel__expected {{
+            padding: 0 10px 6px;
+            color: #9ee7ef;
+            font-size: 1rem;
+            font-weight: 820;
+        }}
         .meta-tooltip {{
             display: none;
             position: absolute;
@@ -2206,7 +2212,7 @@ def meta_gauge(
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Meta relogio</div>
                         <div class="meta-panel__value">{escape(money_fmt(clock_target))}</div>
-                        <div class="meta-panel__subvalue">Esperado: {escape(pct_fmt(clock_ratio))}</div>
+                        <div class="meta-panel__subvalue meta-panel__expected">Esperado {escape(pct_fmt(clock_ratio))}</div>
                         <div class="meta-panel__subvalue" style="color:{clock_status_color};">{escape(clock_status)} | falta {escape(money_fmt(clock_gap))}</div>
                     </div>
                     <div class="meta-panel__card">
