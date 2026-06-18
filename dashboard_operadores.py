@@ -1977,6 +1977,7 @@ def meta_progress_color(pct):
 def business_day_clock_ratio(month_labels, today=None):
     today = (today or pd.Timestamp.today()).normalize()
     month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
+    fixed_business_days = {6: 22}
     selected_months = []
     for label in month_labels or []:
         month_num = month_lookup.get(normalize_status(label))
@@ -1991,11 +1992,12 @@ def business_day_clock_ratio(month_labels, today=None):
         month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
         month_end = month_start + pd.offsets.MonthEnd(0)
         month_business_days = pd.bdate_range(month_start, month_end)
-        total_days += len(month_business_days)
+        month_total_days = fixed_business_days.get(month_num, len(month_business_days))
+        total_days += month_total_days
         if month_num < today.month:
-            elapsed_days += len(month_business_days)
+            elapsed_days += month_total_days
         elif month_num == today.month:
-            elapsed_days += len(month_business_days[month_business_days <= today])
+            elapsed_days += min(len(month_business_days[month_business_days <= today]), month_total_days)
 
     return scalar_safe_div(elapsed_days, total_days)
 
@@ -2204,6 +2206,7 @@ def meta_gauge(
                     <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Meta relogio</div>
                         <div class="meta-panel__value">{escape(money_fmt(clock_target))}</div>
+                        <div class="meta-panel__subvalue">Esperado: {escape(pct_fmt(clock_ratio))}</div>
                         <div class="meta-panel__subvalue" style="color:{clock_status_color};">{escape(clock_status)} | falta {escape(money_fmt(clock_gap))}</div>
                     </div>
                     <div class="meta-panel__card">
