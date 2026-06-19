@@ -1975,9 +1975,9 @@ def meta_progress_color(pct):
 
 
 def business_day_clock_ratio(month_labels, today=None):
-    today = (today or pd.Timestamp.today()).normalize()
+    today = (today or pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)).normalize()
     month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
-    fixed_business_days = {6: 22}
+    operational_holidays = {pd.Timestamp("2026-06-04")}
     selected_months = []
     for label in month_labels or []:
         month_num = month_lookup.get(normalize_status(label))
@@ -1992,12 +1992,19 @@ def business_day_clock_ratio(month_labels, today=None):
         month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
         month_end = month_start + pd.offsets.MonthEnd(0)
         month_business_days = pd.bdate_range(month_start, month_end)
-        month_total_days = fixed_business_days.get(month_num, len(month_business_days))
+        previous_month_start = month_start - pd.offsets.MonthBegin(1)
+        previous_month_end = month_start - pd.Timedelta(days=1)
+        previous_month_business_days = pd.bdate_range(previous_month_start, previous_month_end)
+        period_start = previous_month_business_days[-1] if len(previous_month_business_days) else previous_month_end
+        period_end = month_business_days[-2] if len(month_business_days) >= 2 else month_end
+        period_business_days = pd.bdate_range(period_start, period_end)
+        period_business_days = period_business_days[~period_business_days.normalize().isin(operational_holidays)]
+        month_total_days = len(period_business_days)
         total_days += month_total_days
-        if month_num < today.month:
+        if today >= period_end:
             elapsed_days += month_total_days
-        elif month_num == today.month:
-            elapsed_days += min(len(month_business_days[month_business_days <= today]), month_total_days)
+        elif today >= period_start:
+            elapsed_days += len(period_business_days[period_business_days <= today])
 
     return scalar_safe_div(elapsed_days, total_days)
 
@@ -3804,7 +3811,7 @@ with tabs[7]:
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
     honorarios_escritorio = resultados["HONORARIOS_ESCRITORIO"].sum()
     valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
-    hoje = pd.Timestamp.today().normalize()
+    hoje = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None).normalize()
     abertos_hoje = resultados[resultados["IS_EM_ABERTO"] & resultados["DATA_VENCIMENTO"].dt.normalize().eq(hoje)]
     boletos_abertos_hoje = len(abertos_hoje)
     valor_aberto_hoje = abertos_hoje["VALOR_EM_ABERTO"].sum()
