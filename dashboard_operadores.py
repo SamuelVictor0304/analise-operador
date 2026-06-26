@@ -36,6 +36,27 @@ POSTGRES_DEFAULTS = {
 }
 
 
+def stretch_altair_chart(chart):
+    try:
+        st.altair_chart(chart, width="stretch")
+    except TypeError:
+        st.altair_chart(chart, use_container_width=True)
+
+
+def stretch_dataframe(df, **kwargs):
+    try:
+        st.dataframe(df, width="stretch", **kwargs)
+    except TypeError:
+        st.dataframe(df, use_container_width=True, **kwargs)
+
+
+def html_block(html, height=None):
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        components.html(html, height=height)
+
+
 def latest_file(pattern):
     files = [p for p in BASE_DIR.glob(pattern) if not p.name.startswith("~$")]
     if not files:
@@ -733,7 +754,7 @@ def region_meta_map(region_df, title):
             """
         )
 
-    components.html(
+    html_block(
         f"""
         <style>
         .region-map {{
@@ -2272,7 +2293,7 @@ def bar_chart(df, x, y, color=None, tooltip=None, title=None, sort="-x", height=
         )
         .properties(height=height, title=title)
     )
-    st.altair_chart(chart, use_container_width=True)
+    stretch_altair_chart(chart)
 
 
 def line_chart(df, x, y, color, title):
@@ -2290,7 +2311,7 @@ def line_chart(df, x, y, color, title):
         )
         .properties(height=280, title=title)
     )
-    st.altair_chart(chart, use_container_width=True)
+    stretch_altair_chart(chart)
 
 
 def heatmap(df, x, y, metric, title):
@@ -2312,7 +2333,7 @@ def heatmap(df, x, y, metric, title):
         )
         .properties(height=420, title=title)
     )
-    st.altair_chart(chart, use_container_width=True)
+    stretch_altair_chart(chart)
 
 
 def workplan_analytics_section(workplan_view):
@@ -2412,9 +2433,9 @@ def workplan_analytics_section(workplan_view):
 
     c1, c2 = st.columns([1.2, 1])
     with c1:
-        st.altair_chart(prioridade_chart, use_container_width=True)
+        stretch_altair_chart(prioridade_chart)
     with c2:
-        st.altair_chart(motivo_chart, use_container_width=True)
+        stretch_altair_chart(motivo_chart)
 
     if "inadimplencia_precoce_tipo" in workplan_view.columns:
         fpd_epd_df = (
@@ -2446,7 +2467,7 @@ def workplan_analytics_section(workplan_view):
             )
             .properties(height=190, title="Probabilidade e valor esperado por FPD/EPD")
         )
-        st.altair_chart(fpd_epd_chart, use_container_width=True)
+        stretch_altair_chart(fpd_epd_chart)
 
     st.markdown("#### Exportar clientes por prioridade")
     export_prioridades = st.multiselect(
@@ -2537,7 +2558,7 @@ def workplan_analytics_section(workplan_view):
             )
             .properties(height=320, title="Mapa de oportunidade por segmento e faixa")
         )
-        st.altair_chart(matriz_chart, use_container_width=True)
+        stretch_altair_chart(matriz_chart)
     with c2:
         regiao_df = (
             workplan_view.groupby(region_col, dropna=False)
@@ -2599,7 +2620,7 @@ def workplan_analytics_section(workplan_view):
         )
         .properties(height=260, title="Distribuição de clientes por chance estimada")
     )
-    st.altair_chart(chance_chart, use_container_width=True)
+    stretch_altair_chart(chance_chart)
 
 
 def display_fields(df):
@@ -2790,10 +2811,9 @@ def help_config(df):
 
 def data_table(df, **kwargs):
     formatted = formatted_table(df)
-    st.dataframe(
+    stretch_dataframe(
         formatted,
         column_config=help_config(formatted),
-        use_container_width=True,
         hide_index=True,
         **kwargs,
     )
@@ -3115,7 +3135,7 @@ with tabs[1]:
             )
             .properties(height=320, title="Volume versus eficiência")
         )
-        st.altair_chart(scatter, use_container_width=True)
+        stretch_altair_chart(scatter)
 
     st.subheader("Ranking detalhado")
     cols = [
@@ -3232,7 +3252,7 @@ with tabs[2]:
             )
             .properties(height=320, title="Qualidade da conversão (CPC único → acordo × CPC único → pagamento)")
         )
-        st.altair_chart(scatter, use_container_width=True)
+        stretch_altair_chart(scatter)
 
     st.subheader("Quartil de conversão CPC")
     st.caption("Classificação pelo percentual de CPCs únicos que resultaram em pagamento. Mínimo de 3 CPCs únicos para entrar no ranking.")
@@ -3242,7 +3262,7 @@ with tabs[2]:
     c1, c2 = st.columns([1, 1.3])
     with c1:
         st.subheader("Resumo por diagnóstico")
-        st.dataframe(diagnostico_cpc_resumo, use_container_width=True, hide_index=True)
+        stretch_dataframe(diagnostico_cpc_resumo, hide_index=True)
     with c2:
         chart_cpc_quartil = display_fields(
             cpc_df[cpc_df["cpcs_unicos"] >= 3]
@@ -3269,9 +3289,8 @@ with tabs[2]:
 
     st.subheader("Operadores em cada quartil")
     grupos_cpc = cpc_operator_groups(cpc_df)
-    st.dataframe(
+    stretch_dataframe(
         grupos_cpc,
-        use_container_width=True,
         hide_index=True,
         column_config={
             "Métrica": st.column_config.TextColumn("Métrica", help="Indicador usado para montar o quartil."),
@@ -3285,7 +3304,7 @@ with tabs[2]:
     st.caption("Médias calculadas sobre os operadores com pelo menos 3 CPCs únicos dentro do quartil. Totais são a soma consolidada de todos os operadores do grupo.")
     desc_df = cpc_quartil_descritivo(cpc_df)
     if not desc_df.empty:
-        st.dataframe(desc_df, use_container_width=True, hide_index=True)
+        stretch_dataframe(desc_df, hide_index=True)
 
         _descricoes_quartil = {
             "Q4 - destaque": "Representam o padrão de excelência do grupo. Vale mapear as boas práticas desses operadores para disseminar à equipe.",
@@ -3387,7 +3406,7 @@ with tabs[2]:
                 )
                 .properties(height=360, title="CPCs únicos × Valor recebido por quartil")
             )
-            st.altair_chart(scatter_vol_chart, use_container_width=True)
+            stretch_altair_chart(scatter_vol_chart)
         else:
             st.info("Sem dados para o gráfico de dispersão.")
 
@@ -3399,13 +3418,13 @@ with tabs[2]:
         .reset_index()
     )
     vol_resumo.columns = ["Quartil", "Operadores"]
-    st.dataframe(vol_resumo, use_container_width=True, hide_index=True)
+    stretch_dataframe(vol_resumo, hide_index=True)
 
     st.subheader("Análise descritiva por volume de CPC")
     st.caption("Médias e totais calculados sobre os operadores de cada quartil com ao menos 1 CPC único.")
     desc_vol_df = cpc_volume_quartil_descritivo(cpc_df)
     if not desc_vol_df.empty:
-        st.dataframe(desc_vol_df, use_container_width=True, hide_index=True)
+        stretch_dataframe(desc_vol_df, hide_index=True)
 
         _descricoes_volume_quartil = {
             "Q4 - destaque": "Alta produtividade de contato produtivo; esses operadores lideram em volume de CPCs únicos. Vale mapear a abordagem e cadência de acionamento desse grupo para disseminar à equipe.",
@@ -3872,7 +3891,7 @@ with tabs[7]:
     c1, c2 = st.columns([1, 1.3])
     with c1:
         st.subheader("Resumo por diagnóstico")
-        st.dataframe(meta_resumo, use_container_width=True, hide_index=True)
+        stretch_dataframe(meta_resumo, hide_index=True)
     with c2:
         chart_meta = display_fields(metas_df.sort_values("atingimento_meta_individual", ascending=False).head(15))
         bar_chart(
@@ -3897,9 +3916,8 @@ with tabs[7]:
 
     st.subheader("Operadores em cada quartil")
     grupos_meta = meta_operator_groups(metas_df)
-    st.dataframe(
+    stretch_dataframe(
         grupos_meta,
-        use_container_width=True,
         hide_index=True,
         column_config={
             "Métrica": st.column_config.TextColumn("Métrica", help="Indicador usado para montar o quartil."),
