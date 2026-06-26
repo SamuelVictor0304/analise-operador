@@ -2336,6 +2336,59 @@ def heatmap(df, x, y, metric, title):
     stretch_altair_chart(chart)
 
 
+def payment_profile_analysis(resultados):
+    dims = [
+        ("OPERADOR", "Operador"),
+        ("FAIXA_ATRASO", "Faixa de atraso"),
+        ("SEGMENTO_DPD", "Segmento DPD"),
+        ("REGIÃO", "Região"),
+        ("UF", "UF"),
+        ("CAMPANHA", "Campanha"),
+    ]
+    rows = []
+    for col, label in dims:
+        if col not in resultados.columns:
+            continue
+        grouped = (
+            resultados.assign(perfil=resultados[col].replace("", np.nan).fillna("Sem informacao"))
+            .groupby("perfil", dropna=False)
+            .agg(
+                clientes=("CONTRATO_KEY", "nunique"),
+                acordos=("CONTRATO_KEY", "count"),
+                pagamentos=("IS_PAGO", "sum"),
+                acordos_em_aberto=("IS_EM_ABERTO", "sum"),
+                acordos_nao_pagou=("IS_NAO_PAGOU", "sum"),
+                valor_negociado=("VALOR_NEGOCIADO", "sum"),
+                valor_pago=("VALOR_PAGO", "sum"),
+                valor_em_aberto=("VALOR_EM_ABERTO", "sum"),
+                valor_nao_pagou=("VALOR_NAO_PAGOU", "sum"),
+            )
+            .reset_index()
+        )
+        grouped["dimensao"] = label
+        rows.append(grouped)
+    if not rows:
+        return pd.DataFrame()
+    df = pd.concat(rows, ignore_index=True)
+    df["tx_pagamento"] = safe_div(df["pagamentos"], df["acordos"])
+    df["efetividade_pagamento"] = safe_div(df["pagamentos"], df["pagamentos"] + df["acordos_nao_pagou"])
+    df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
+    df["pagamentos_esperados_abertos"] = df["acordos_em_aberto"] * df["efetividade_pagamento"].fillna(0)
+    df["pagamentos_previstos_total"] = df["pagamentos"] + df["pagamentos_esperados_abertos"]
+    df["valor_esperado_aberto"] = df["valor_em_aberto"] * df["efetividade_pagamento"].fillna(0)
+    df["score_eficiencia_pagamento"] = (
+        df["tx_pagamento"].fillna(0) * 0.45
+        + df["efetividade_pagamento"].fillna(0) * 0.35
+        + df["recuperacao"].fillna(0) * 0.20
+    )
+    df["base_confiavel"] = np.select(
+        [df["acordos"] >= 20, df["acordos"] >= 8],
+        ["Alta", "Media"],
+        default="Baixa",
+    )
+    return df.sort_values(["score_eficiencia_pagamento", "valor_pago", "acordos"], ascending=False)
+
+
 def workplan_analytics_section(workplan_view):
     if workplan_view.empty:
         st.info("Sem contratos nos filtros atuais para montar a visão analítica.")
@@ -2500,6 +2553,7 @@ def workplan_analytics_section(workplan_view):
         "probabilidade_recuperacao",
         "valor_potencial",
         "valor_esperado_recuperacao",
+        "valor_esperado_aberto",
         "score_recuperacao",
         "SEGMENTO_DPD",
         "FAIXA_ATRASO",
@@ -2642,6 +2696,7 @@ def display_fields(df):
         "recuperacao_esperada",
         "valor_potencial",
         "valor_esperado_recuperacao",
+        "valor_esperado_aberto",
     ]
     pct_cols = [
         "tx_contato",
@@ -2675,6 +2730,7 @@ def display_fields(df):
         "prob_pagamento_perfil",
         "recuperacao_media_perfil",
         "risco_quebra_perfil",
+        "score_eficiencia_pagamento",
     ]
     num_cols = [
         "acionamentos",
@@ -2984,6 +3040,7 @@ valor_pago = resultados["VALOR_PAGO"].sum()
 valor_em_aberto = resultados["VALOR_EM_ABERTO"].sum()
 valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
 meta_geral_atual = office_goal_for_resultados(resultados)
+tx_pagamento_geral = total_pagamentos / total_acordos if total_acordos else 0
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
 pct_quebra_geral = valor_nao_pagou / meta_geral_atual if meta_geral_atual else 0
 
@@ -3007,14 +3064,14 @@ with kpi_row2[1]:
 with kpi_row2[2]:
     metric_card("Negociado", money_fmt(valor_negociado))
 with kpi_row2[5]:
-    metric_card("Efetividade pgto", pct_fmt(efetividade_pagamento_geral))
+    metric_card("Taxa pgto", pct_fmt(tx_pagamento_geral))
 
 with kpi_row2[3]:
     metric_card("Recebido", money_fmt(valor_pago))
 with kpi_row2[4]:
     metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
 
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Insights"])
+tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Pagamentos", "Insights"])
 
 with kpi_row3[0]:
     metric_card("% quebras", pct_fmt(pct_quebra_geral))
@@ -4260,6 +4317,141 @@ with tabs[8]:
             )
 
 with tabs[9]:
+    st.subheader("Analitica de pagamentos por perfil")
+    st.caption("A taxa de pagamento considera todos os acordos do filtro atual: pagamentos divididos por acordos. A efetividade vencida considera apenas pagos e nao pagos, deixando em aberto fora do denominador.")
+
+    payment_profiles = payment_profile_analysis(resultados)
+    pagamentos_previstos = total_pagamentos + (total_em_aberto * efetividade_pagamento_geral)
+    valor_aberto_esperado = valor_em_aberto * efetividade_pagamento_geral
+
+    p1, p2, p3, p4 = st.columns(4)
+    with p1:
+        metric_card("Taxa de pagamento", pct_fmt(tx_pagamento_geral), f"{num_fmt(total_pagamentos)} de {num_fmt(total_acordos)} acordos")
+    with p2:
+        metric_card("Efetividade vencida", pct_fmt(efetividade_pagamento_geral), f"{num_fmt(total_pagamentos)} de {num_fmt(base_quebras)} desfechos")
+    with p3:
+        metric_card("Pagamentos previstos", f"{pagamentos_previstos:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."), "Pagos atuais + em aberto x efetividade")
+    with p4:
+        metric_card("Valor aberto esperado", money_fmt(valor_aberto_esperado), "Em aberto x efetividade vencida")
+
+    if payment_profiles.empty:
+        st.info("Sem dados de pagamento para os filtros atuais.")
+    else:
+        dimensoes = payment_profiles["dimensao"].dropna().unique().tolist()
+        dimensoes_sel = st.multiselect("Perfilamento", dimensoes, default=dimensoes)
+        min_acordos = st.slider("Base minima de acordos por perfil", 1, 50, 5)
+
+        profile_view = payment_profiles[
+            payment_profiles["dimensao"].isin(dimensoes_sel)
+            & payment_profiles["acordos"].ge(min_acordos)
+        ].copy()
+
+        if profile_view.empty:
+            st.info("Sem perfis com a base minima selecionada.")
+        else:
+            profile_view["perfil_completo"] = profile_view["dimensao"] + " | " + profile_view["perfil"].astype(str)
+            profile_view["gap_taxa_pagamento"] = profile_view["tx_pagamento"] - tx_pagamento_geral
+            profile_display = display_fields(profile_view)
+
+            c1, c2 = st.columns([1.2, 1])
+            with c1:
+                top_profiles = profile_display.sort_values(["score_eficiencia_pagamento", "valor_pago"], ascending=False).head(15)
+                bar_chart(
+                    top_profiles,
+                    x=alt.X("score_eficiencia_pagamento:Q", axis=alt.Axis(format="%"), title="Score de eficiencia"),
+                    y=alt.Y("perfil_completo:N", title=None, sort="-x"),
+                    color="dimensao:N",
+                    tooltip=[
+                        "dimensao",
+                        "perfil",
+                        "base_confiavel",
+                        "acordos_br",
+                        "pagamentos_br",
+                        "tx_pagamento_br",
+                        "efetividade_pagamento_br",
+                        "recuperacao_br",
+                        "valor_pago_br",
+                    ],
+                    title="Perfis com maior eficiencia de pagamento",
+                    height=420,
+                )
+            with c2:
+                forecast_profiles = profile_display[profile_display["acordos_em_aberto"] > 0].sort_values("valor_esperado_aberto", ascending=False).head(12)
+                if forecast_profiles.empty:
+                    st.info("Sem acordos em aberto nos perfis filtrados.")
+                else:
+                    bar_chart(
+                        forecast_profiles,
+                        x="valor_esperado_aberto:Q",
+                        y=alt.Y("perfil_completo:N", title=None, sort="-x"),
+                        color="dimensao:N",
+                        tooltip=[
+                            "dimensao",
+                            "perfil",
+                            "acordos_em_aberto_br",
+                            "efetividade_pagamento_br",
+                            "pagamentos_esperados_abertos",
+                            "valor_em_aberto_br",
+                            "valor_esperado_aberto_br",
+                        ],
+                        title="Potencial esperado nos acordos em aberto",
+                        height=420,
+                    )
+
+            dimensao_resumo = (
+                profile_view.groupby("dimensao", dropna=False)
+                .agg(
+                    perfis=("perfil", "count"),
+                    acordos=("acordos", "sum"),
+                    pagamentos=("pagamentos", "sum"),
+                    acordos_em_aberto=("acordos_em_aberto", "sum"),
+                    acordos_nao_pagou=("acordos_nao_pagou", "sum"),
+                    valor_pago=("valor_pago", "sum"),
+                    valor_em_aberto=("valor_em_aberto", "sum"),
+                )
+                .reset_index()
+            )
+            dimensao_resumo["tx_pagamento"] = safe_div(dimensao_resumo["pagamentos"], dimensao_resumo["acordos"])
+            dimensao_resumo["efetividade_pagamento"] = safe_div(dimensao_resumo["pagamentos"], dimensao_resumo["pagamentos"] + dimensao_resumo["acordos_nao_pagou"])
+
+            st.subheader("Resumo por tipo de perfil")
+            data_table(display_fields(dimensao_resumo)[[
+                "dimensao",
+                "perfis",
+                "acordos",
+                "pagamentos",
+                "acordos_em_aberto",
+                "acordos_nao_pagou",
+                "tx_pagamento",
+                "efetividade_pagamento",
+                "valor_pago",
+                "valor_em_aberto",
+            ]])
+
+            st.subheader("Tabela detalhada dos perfis")
+            detail_cols = [
+                "dimensao",
+                "perfil",
+                "base_confiavel",
+                "clientes",
+                "acordos",
+                "pagamentos",
+                "acordos_em_aberto",
+                "acordos_nao_pagou",
+                "tx_pagamento",
+                "efetividade_pagamento",
+                "recuperacao",
+                "score_eficiencia_pagamento",
+                "valor_negociado",
+                "valor_pago",
+                "valor_em_aberto",
+                "valor_esperado_aberto",
+                "pagamentos_esperados_abertos",
+                "pagamentos_previstos_total",
+            ]
+            data_table(profile_view[detail_cols].head(100))
+
+with tabs[10]:
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
     oportunidades = operador_df[(operador_df["acionamentos"] >= operador_df["acionamentos"].median()) & (operador_df["score"] < avg_score)].sort_values("acionamentos", ascending=False)
     destaques = operador_df[operador_df["score"] >= operador_df["score"].quantile(0.75)].sort_values("score", ascending=False)
