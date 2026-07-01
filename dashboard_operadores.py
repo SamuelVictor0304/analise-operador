@@ -24,7 +24,7 @@ POST_REPOSSESSED_GOAL = 770000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
 ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
-DEFAULT_RESULT_MONTH = "JUNHO"
+DEFAULT_RESULT_MONTH = "JULHO"
 POSTGRES_DEFAULTS = {
     "host": "",
     "port": 5432,
