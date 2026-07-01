@@ -25,6 +25,9 @@ SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
 ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
 DEFAULT_RESULT_MONTH = "JULHO"
+OPERATIONAL_BUSINESS_DAY_TOTALS = {
+    (2026, 7): 23,
+}
 POSTGRES_DEFAULTS = {
     "host": "",
     "port": 5432,
@@ -2020,12 +2023,12 @@ def business_day_clock_ratio(month_labels, today=None):
         period_end = month_business_days[-2] if len(month_business_days) >= 2 else month_end
         period_business_days = pd.bdate_range(period_start, period_end)
         period_business_days = period_business_days[~period_business_days.normalize().isin(operational_holidays)]
-        month_total_days = len(period_business_days)
+        month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(period_business_days))
         total_days += month_total_days
         if today >= period_end:
             elapsed_days += month_total_days
         elif today >= period_start:
-            elapsed_days += len(period_business_days[period_business_days <= today])
+            elapsed_days += min(len(period_business_days[period_business_days <= today]), month_total_days)
 
     return scalar_safe_div(elapsed_days, total_days)
 
