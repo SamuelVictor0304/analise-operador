@@ -20,7 +20,7 @@ COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ()
 DEFAULT_OPERATOR_GOAL = 200000
-POST_REPOSSESSED_GOAL = 770000
+POST_REPOSSESSED_GOAL = 900000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
 ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
@@ -216,7 +216,7 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 200 mil; Victor Lima usa R$ 770 mil de pós retomado."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 200 mil; Victor Lima usa R$ 900 mil de pós retomado."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
     "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
@@ -444,8 +444,25 @@ def quartile_label(series, higher_is_better=True, min_series=None, min_value=1):
 
 
 def selected_months(resultados):
-    meses = resultados[["MES_RESULTADO", "MES_NUM"]].replace("", np.nan).dropna(subset=["MES_RESULTADO"]).drop_duplicates()
-    return meses.sort_values(["MES_NUM", "MES_RESULTADO"])["MES_RESULTADO"].tolist()
+    return result_months_frame(resultados)["MES_RESULTADO"].tolist()
+
+
+def result_months_frame(resultados):
+    meses = (
+        resultados[["MES_RESULTADO", "MES_NUM"]]
+        .replace("", np.nan)
+        .dropna(subset=["MES_RESULTADO"])
+        .copy()
+    )
+    if meses.empty:
+        return meses
+    meses["MES_NUM"] = pd.to_numeric(meses["MES_NUM"], errors="coerce")
+    meses = (
+        meses.sort_values(["MES_RESULTADO", "MES_NUM"], na_position="last")
+        .drop_duplicates(subset=["MES_RESULTADO"], keep="first")
+        .sort_values(["MES_NUM", "MES_RESULTADO"], na_position="last")
+    )
+    return meses
 
 
 def selected_months_count(resultados):
@@ -1364,13 +1381,7 @@ def apply_filters(eventos, resultados):
     segmentos_dpd = ["POTLOSS", "SALVAGE", "SALVAGE +"]
     campanhas = sorted(resultados["CAMPANHA"].replace("", np.nan).dropna().unique())
     produtos = sorted(eventos.get("PRODUTO", pd.Series(dtype=str)).replace("", np.nan).dropna().unique())
-    meses_df = (
-        resultados[["MES_RESULTADO", "MES_NUM"]]
-        .replace("", np.nan)
-        .dropna(subset=["MES_RESULTADO"])
-        .drop_duplicates()
-        .sort_values(["MES_NUM", "MES_RESULTADO"])
-    )
+    meses_df = result_months_frame(resultados)
     meses = meses_df["MES_RESULTADO"].tolist()
     mes_padrao = []
     if not meses_df.empty:
@@ -3884,7 +3895,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 200.000 por negociador; Victor Lima usa a meta individual de R$ 770.000 referente aos casos de pós retomado.")
+    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 200.000 por negociador; Victor Lima usa a meta individual de R$ 900.000 referente aos casos de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
