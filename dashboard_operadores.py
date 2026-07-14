@@ -1482,6 +1482,22 @@ def apply_filters(eventos, resultados):
     return eventos, resultados, operador_sel
 
 
+def ensure_cpc_client_key(eventos, resultados):
+    eventos = eventos.copy()
+    resultados = resultados.copy()
+    if "CPC_CLIENT_KEY" not in eventos.columns:
+        if "CPF_CNPJ_KEY" in eventos.columns:
+            eventos["CPC_CLIENT_KEY"] = eventos["CPF_CNPJ_KEY"].fillna(eventos["CONTRATO_KEY"])
+        else:
+            eventos["CPC_CLIENT_KEY"] = eventos["CONTRATO_KEY"]
+    if "CPC_CLIENT_KEY" not in resultados.columns:
+        if "CPF_CNPJ_KEY" in resultados.columns:
+            resultados["CPC_CLIENT_KEY"] = resultados["CPF_CNPJ_KEY"].fillna(resultados["CONTRATO_KEY"])
+        else:
+            resultados["CPC_CLIENT_KEY"] = resultados["CONTRATO_KEY"]
+    return eventos, resultados
+
+
 def aggregate_operator(eventos, resultados):
     ev = eventos.groupby("OPERADOR", dropna=True).agg(
         acionamentos=("EVENTO_TXT", "size"),
@@ -3077,6 +3093,8 @@ def glossary():
 eventos_raw, contratos_raw, resultados_raw = load_data(data_file_versions())
 workplan_raw, workplan_error = load_workplan()
 eventos, resultados, operadores_filtrados = apply_filters(eventos_raw, resultados_raw)
+eventos, resultados = ensure_cpc_client_key(eventos, resultados)
+eventos_raw, resultados_raw = ensure_cpc_client_key(eventos_raw, resultados_raw)
 operador_df = aggregate_operator(eventos, resultados)
 cpc_df = aggregate_cpc_operator(eventos, resultados)
 workplan_df = build_workplan_analysis(workplan_raw, eventos_raw[eventos_raw["IS_ACIONAMENTO"]], resultados_raw)
