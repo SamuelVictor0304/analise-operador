@@ -457,9 +457,10 @@ def result_months_frame(resultados):
     if meses.empty:
         return meses
     meses["MES_NUM"] = pd.to_numeric(meses["MES_NUM"], errors="coerce")
+    meses["MES_KEY"] = meses["MES_RESULTADO"].map(normalize_month_key)
     meses = (
-        meses.sort_values(["MES_RESULTADO", "MES_NUM"], na_position="last")
-        .drop_duplicates(subset=["MES_RESULTADO"], keep="first")
+        meses.sort_values(["MES_NUM", "MES_RESULTADO"], na_position="last")
+        .drop_duplicates(subset=["MES_KEY"], keep="first")
         .sort_values(["MES_NUM", "MES_RESULTADO"], na_position="last")
     )
     return meses
@@ -475,7 +476,8 @@ def office_goal_for_resultados(resultados):
 
 def office_goal_for_months(months):
     metas_gerais = load_office_goals(file_version(RESULTADOS_FILE))
-    selected_goals = [metas_gerais.get(normalize_month_key(mes), 0) for mes in months]
+    month_keys = list(dict.fromkeys(normalize_month_key(mes) for mes in months if normalize_month_key(mes)))
+    selected_goals = [metas_gerais.get(mes, 0) for mes in month_keys]
     positive_goals = [goal for goal in selected_goals if goal > 0]
     if positive_goals:
         return sum(positive_goals)
@@ -2009,7 +2011,7 @@ def meta_progress_color(pct):
     return blend_hex("#1f7a4d", "#72d391", (pct - 0.80) / 0.20)
 
 
-def business_day_clock_ratio(month_labels, today=None):
+def business_day_clock_details(month_labels, today=None):
     today = (today or pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)).normalize()
     month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
     operational_holidays = {pd.Timestamp("2026-06-04")}
@@ -2023,6 +2025,7 @@ def business_day_clock_ratio(month_labels, today=None):
 
     elapsed_days = 0
     total_days = 0
+    remaining_days = 0
     for month_num in selected_months:
         month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
         month_end = month_start + pd.offsets.MonthEnd(0)
@@ -2035,13 +2038,25 @@ def business_day_clock_ratio(month_labels, today=None):
         period_business_days = pd.bdate_range(period_start, period_end)
         period_business_days = period_business_days[~period_business_days.normalize().isin(operational_holidays)]
         month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(period_business_days))
+        elapsed_for_month = 0
         total_days += month_total_days
         if today >= period_end:
-            elapsed_days += month_total_days
+            elapsed_for_month = month_total_days
         elif today >= period_start:
-            elapsed_days += min(len(period_business_days[period_business_days <= today]), month_total_days)
+            elapsed_for_month = min(len(period_business_days[period_business_days <= today]), month_total_days)
+        elapsed_days += elapsed_for_month
+        remaining_days += max(month_total_days - elapsed_for_month, 0)
 
-    return scalar_safe_div(elapsed_days, total_days)
+    return {
+        "elapsed_days": elapsed_days,
+        "total_days": total_days,
+        "remaining_days": remaining_days,
+        "ratio": scalar_safe_div(elapsed_days, total_days),
+    }
+
+
+def business_day_clock_ratio(month_labels, today=None):
+    return business_day_clock_details(month_labels, today).get("ratio", 0)
 
 
 def meta_gauge(
@@ -2059,6 +2074,8 @@ def meta_gauge(
     clock_target=0,
     clock_gap=0,
     clock_ratio=0,
+    daily_target=0,
+    remaining_business_days=0,
     open_today_rows=None,
     paid_today_rows=None,
     title="Recebimento Total",
@@ -2076,6 +2093,8 @@ def meta_gauge(
     clock_target = 0 if pd.isna(clock_target) else float(clock_target)
     clock_gap = 0 if pd.isna(clock_gap) else float(clock_gap)
     clock_ratio = 0 if pd.isna(clock_ratio) else float(clock_ratio)
+    daily_target = 0 if pd.isna(daily_target) else float(daily_target)
+    remaining_business_days = 0 if pd.isna(remaining_business_days) else int(remaining_business_days)
     if target <= 0:
         st.info("Sem meta geral cadastrada para montar o indicador.")
         return
@@ -2134,6 +2153,9 @@ def meta_gauge(
             box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
             color: #f8fafc;
             overflow: visible;
+        }}
+        .meta-panel__card--wide {{
+            grid-column: 1 / -1;
         }}
         .meta-panel__card-title {{
             padding: 7px 10px;
@@ -2258,12 +2280,17 @@ def meta_gauge(
                         <div class="meta-panel__subvalue" style="color:{clock_status_color};">{escape(clock_status)} | falta {escape(money_fmt(clock_gap))}</div>
                     </div>
                     <div class="meta-panel__card">
+                        <div class="meta-panel__card-title">Meta diaria</div>
+                        <div class="meta-panel__value">{escape(money_fmt(daily_target))}</div>
+                        <div class="meta-panel__subvalue">{escape(num_fmt(remaining_business_days))} dias uteis restantes</div>
+                    </div>
+                    <div class="meta-panel__card">
                         <div class="meta-panel__card-title">Ticket medio</div>
                         <div class="meta-panel__value">{escape(money_fmt(avg_paid_ticket))}</div>
                         <div class="meta-panel__subvalue">Pos retomada: {escape(pct_fmt(pos_paid_value_pct))} do recebido</div>
                         <div class="meta-panel__subvalue">{escape(money_fmt(pos_paid_value))} | {escape(pct_fmt(pos_paid_count_pct))} dos acordos</div>
                     </div>
-                    <div class="meta-panel__card">
+                    <div class="meta-panel__card meta-panel__card--wide">
                         <div class="meta-panel__card-title">Hoje</div>
                         <div class="meta-panel__daily-row">
                             <span>Recebido</span><strong>{escape(num_fmt(paid_today_count))}</strong>
@@ -3915,9 +3942,17 @@ with tabs[7]:
     pct_acordos_pos_retomada = scalar_safe_div(len(pagos_pos_retomada), pagamentos_total)
     pct_recebido_pos_retomada = scalar_safe_div(valor_pos_retomada, recebido_meta_geral)
     meses_texto = ", ".join(meses_meta) if meses_meta else "Sem mês filtrado"
-    meta_relogio_pct = business_day_clock_ratio(meses_meta, hoje)
+    meta_relogio_info = business_day_clock_details(meses_meta, hoje)
+    meta_relogio_pct = meta_relogio_info["ratio"]
     meta_relogio_valor = meta_geral * meta_relogio_pct
     gap_meta_relogio = max(meta_relogio_valor - recebido_meta_geral, 0)
+    dias_uteis_restantes = int(meta_relogio_info["remaining_days"])
+    gap_meta_total = max(meta_geral - recebido_meta_geral, 0)
+    meta_diaria_necessaria = (
+        scalar_safe_div(gap_meta_total, dias_uteis_restantes)
+        if dias_uteis_restantes
+        else gap_meta_total
+    )
 
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
@@ -3950,6 +3985,8 @@ with tabs[7]:
         meta_relogio_valor,
         gap_meta_relogio,
         meta_relogio_pct,
+        meta_diaria_necessaria,
+        dias_uteis_restantes,
         abertos_hoje,
         recebidos_hoje,
     )
