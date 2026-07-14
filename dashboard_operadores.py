@@ -186,8 +186,8 @@ FIELD_HELP = {
     "contatos_efetivos": ("Contatos efetivos", "Mesmo critério de CPC: eventos iniciados por 02, 03, 04 ou 05."),
     "contatos_cliente": ("Contatos cliente", "Eventos iniciados por 02 ou 03, contato direto com cliente."),
     "cpcs": ("CPCs", "Eventos produtivos iniciados por 02, 03, 04 ou 05."),
-    "cpcs_unicos": ("CPCs únicos", "Contratos distintos com pelo menos um CPC por operador. Remove acionamentos repetidos do mesmo contrato."),
-    "clientes_cpc": ("Clientes com CPC", "Contratos distintos que tiveram ao menos um CPC."),
+    "cpcs_unicos": ("CPCs únicos", "Clientes distintos por CPF/CNPJ com pelo menos um CPC por operador. Remove acionamentos repetidos do mesmo cliente."),
+    "clientes_cpc": ("Clientes com CPC", "Clientes distintos por CPF/CNPJ que tiveram ao menos um CPC."),
     "contratos_cpc": ("Contratos com CPC", "Contratos distintos que tiveram ao menos um CPC."),
     "acordos": ("Acordos", "Quantidade de acordos localizados na base de resultados."),
     "pagamentos": ("Pagamentos", "Acordos com status PAGOU ou data de pagamento preenchida."),
@@ -204,8 +204,8 @@ FIELD_HELP = {
     "tx_sem_pagamento": ("Taxa sem pagamento", "Acordos sem pagamento divididos pelo total de acordos."),
     "tx_cpc_acordo": ("Taxa CPC -> acordo", "Contratos com CPC que geraram acordo, divididos pelos contratos com CPC."),
     "tx_cpc_pagamento": ("Taxa CPC -> pagamento", "Contratos com CPC que geraram pagamento, divididos pelos contratos com CPC."),
-    "tx_cpc_unico_acordo": ("Taxa CPC único -> acordo", "Contratos únicos com CPC que geraram acordo, divididos pelos contratos únicos com CPC."),
-    "tx_cpc_unico_pagamento": ("Taxa CPC único -> pagamento", "Contratos únicos com CPC que geraram pagamento, divididos pelos contratos únicos com CPC."),
+    "tx_cpc_unico_acordo": ("Taxa CPC único -> acordo", "Clientes únicos por CPF/CNPJ com CPC que geraram acordo, divididos pelos clientes únicos com CPC."),
+    "tx_cpc_unico_pagamento": ("Taxa CPC único -> pagamento", "Clientes únicos por CPF/CNPJ com CPC que geraram pagamento, divididos pelos clientes únicos com CPC."),
     "tx_acordo_pagamento": ("Taxa acordo -> pagamento", "Pagamentos divididos pelos acordos originados em contratos com CPC."),
     "tx_acordo_sem_pagamento": ("Taxa acordo sem pagamento", "Acordos sem pagamento divididos pelos acordos originados em contratos com CPC."),
     "valor_negociado": ("Valor negociado", "Soma da coluna VALOR DO BANCO - META da base de resultados."),
@@ -260,6 +260,10 @@ def normalize_contract(value):
         text = text[:-2]
     digits = re.sub(r"\D", "", text)
     return digits or np.nan
+
+
+def normalize_document(value):
+    return normalize_contract(value)
 
 
 def normalize_operator(value):
@@ -1283,9 +1287,9 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
 
 @st.cache_data(show_spinner=False)
 def load_data(data_version):
-    eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos", usecols=[0, 4, 7, 8, 11])
+    eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos", usecols=[0, 1, 4, 7, 8, 11])
     clientes_file = latest_file("Pesquisa-Cliente-908-*.xlsx")
-    contratos = pd.read_excel(clientes_file, sheet_name="Contratos", usecols=[5, 6, 7, 8, 9, 14, 18])
+    contratos = pd.read_excel(clientes_file, sheet_name="Contratos", usecols=[0, 5, 6, 7, 8, 9, 14, 18])
     resultados = pd.read_excel(
         RESULTADOS_FILE,
         sheet_name="BASE",
@@ -1301,6 +1305,7 @@ def load_data(data_version):
     resultados = resultados.dropna(subset=["Nº CONTRATO", "ACORDO POR"], how="all").copy()
 
     eventos["CONTRATO_KEY"] = eventos["CONTRATO"].map(normalize_contract)
+    eventos["CPF_CNPJ_KEY"] = eventos.get("CPF/CNPJ", pd.Series(index=eventos.index, dtype="object")).map(normalize_document)
     eventos["OPERADOR"] = eventos["OPERADOR"].map(normalize_operator)
     eventos = eventos[~eventos["OPERADOR"].map(is_excluded_operator)].copy()
     eventos["DATA"] = pd.to_datetime(eventos["DATA"], dayfirst=True, errors="coerce")
@@ -1309,6 +1314,7 @@ def load_data(data_version):
     eventos["TIPO DE ACIONAMENTO"] = eventos["TIPO DE ACIONAMENTO"].map(normalize_text)
 
     contratos["CONTRATO_KEY"] = contratos["CONTRATO"].map(normalize_contract)
+    contratos["CPF_CNPJ_KEY"] = contratos.get("CPF/CNPJ", pd.Series(index=contratos.index, dtype="object")).map(normalize_document)
     contratos["ATRASO"] = pd.to_numeric(contratos["ATRASO"], errors="coerce")
     contratos["TOTAL ABERTO"] = pd.to_numeric(contratos["TOTAL ABERTO"], errors="coerce")
     contratos["FAIXA_ATRASO"] = contratos["ATRASO"].map(atraso_faixa)
@@ -1316,6 +1322,7 @@ def load_data(data_version):
 
     contrato_cols = [
         "CONTRATO_KEY",
+        "CPF_CNPJ_KEY",
         "PRODUTO",
         "REGIAO",
         "FILIAL",
@@ -1328,6 +1335,10 @@ def load_data(data_version):
     contrato_cols = [c for c in contrato_cols if c in contratos.columns]
     contratos_lookup = contratos[contrato_cols].drop_duplicates("CONTRATO_KEY")
     eventos = eventos.merge(contratos_lookup, on="CONTRATO_KEY", how="left", suffixes=("", "_CONTRATO"))
+    if "CPF_CNPJ_KEY_CONTRATO" in eventos.columns:
+        eventos["CPF_CNPJ_KEY"] = eventos["CPF_CNPJ_KEY"].fillna(eventos["CPF_CNPJ_KEY_CONTRATO"])
+        eventos = eventos.drop(columns=["CPF_CNPJ_KEY_CONTRATO"])
+    eventos["CPC_CLIENT_KEY"] = eventos["CPF_CNPJ_KEY"].fillna(eventos["CONTRATO_KEY"])
 
     eventos["IS_AUTO"] = eventos["OPERADOR"].eq("auto")
     eventos["IS_IMPORTACAO"] = eventos["EVENTO_UPPER"].str.contains("IMPORTACAO|IMPORTAÇÃO", na=False)
@@ -1344,6 +1355,12 @@ def load_data(data_version):
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
+    resultados = resultados.merge(
+        contratos_lookup[["CONTRATO_KEY", "CPF_CNPJ_KEY"]],
+        on="CONTRATO_KEY",
+        how="left",
+    )
+    resultados["CPC_CLIENT_KEY"] = resultados["CPF_CNPJ_KEY"].fillna(resultados["CONTRATO_KEY"])
     resultados["PARCELA_NUM"] = resultados["PARCELA"].map(parse_installment_number)
     honorarios_col = next((col for col in resultados.columns if "HONOR" in normalize_status(col)), None)
     if honorarios_col:
@@ -1472,7 +1489,7 @@ def aggregate_operator(eventos, resultados):
         contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
         contatos_cliente=("IS_CONTATO_CLIENTE", "sum"),
         cpcs=("IS_CPC", "sum"),
-        clientes_cpc=("CONTRATO_KEY", lambda s: s[eventos.loc[s.index, "IS_CPC"]].nunique()),
+        clientes_cpc=("CPC_CLIENT_KEY", lambda s: s[eventos.loc[s.index, "IS_CPC"]].nunique()),
     )
     rs = resultados.groupby("OPERADOR", dropna=True).agg(
         acordos=("CONTRATO_KEY", "count"),
@@ -1512,12 +1529,12 @@ def aggregate_cpc_operator(eventos, resultados):
     cpc_eventos = eventos[eventos["IS_CPC"]].copy()
     ev = cpc_eventos.groupby("OPERADOR", dropna=True).agg(
         cpcs=("EVENTO_TXT", "size"),
-        clientes_cpc=("CONTRATO_KEY", "nunique"),
+        clientes_cpc=("CPC_CLIENT_KEY", "nunique"),
         contratos_cpc=("CONTRATO_KEY", "nunique"),
     )
-    ev["cpcs_unicos"] = ev["contratos_cpc"]
-    cpc_contratos = cpc_eventos[["OPERADOR", "CONTRATO_KEY"]].dropna().drop_duplicates()
-    resultado_contrato = resultados.groupby(["OPERADOR", "CONTRATO_KEY"], dropna=True).agg(
+    ev["cpcs_unicos"] = ev["clientes_cpc"]
+    cpc_clientes = cpc_eventos[["OPERADOR", "CPC_CLIENT_KEY"]].dropna().drop_duplicates()
+    resultado_cliente = resultados.groupby(["OPERADOR", "CPC_CLIENT_KEY"], dropna=True).agg(
         qtd_acordos=("CONTRATO_KEY", "count"),
         teve_pagamento=("IS_PAGO", "max"),
         teve_em_aberto=("IS_EM_ABERTO", "max"),
@@ -1527,7 +1544,7 @@ def aggregate_cpc_operator(eventos, resultados):
         valor_em_aberto=("VALOR_EM_ABERTO", "sum"),
         valor_nao_pagou=("VALOR_NAO_PAGOU", "sum"),
     ).reset_index()
-    cpc_resultado = cpc_contratos.merge(resultado_contrato, on=["OPERADOR", "CONTRATO_KEY"], how="left")
+    cpc_resultado = cpc_clientes.merge(resultado_cliente, on=["OPERADOR", "CPC_CLIENT_KEY"], how="left")
     cpc_resultado["qtd_acordos"] = cpc_resultado["qtd_acordos"].fillna(0)
     cpc_resultado["teve_pagamento"] = cpc_resultado["teve_pagamento"].fillna(False).astype(bool)
     cpc_resultado["teve_em_aberto"] = cpc_resultado["teve_em_aberto"].fillna(False).astype(bool)
@@ -3267,27 +3284,54 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader("Conversão CPC para acordos e pagamentos")
-    st.caption("CPC considerado pelos eventos iniciados por 02, 03, 04 e 05.")
+    st.caption("CPC considerado pelos eventos iniciados por 02, 03, 04 e 05. O KPI geral remove duplicidade por CPF/CNPJ.")
 
-    _unicos_total = float(cpc_df["cpcs_unicos"].sum())
-    _tx_acordo_geral = cpc_df["acordos"].sum() / _unicos_total if _unicos_total else 0
-    _tx_pag_geral = cpc_df["pagamentos"].sum() / _unicos_total if _unicos_total else 0
+    cpc_eventos_geral = (
+        eventos[eventos["IS_CPC"]]
+        .dropna(subset=["CPC_CLIENT_KEY"])
+        [["CPC_CLIENT_KEY"]]
+        .drop_duplicates()
+    )
+    resultado_cliente_geral = (
+        resultados.dropna(subset=["CPC_CLIENT_KEY"])
+        .groupby("CPC_CLIENT_KEY", dropna=True)
+        .agg(
+            qtd_acordos=("CONTRATO_KEY", "count"),
+            teve_pagamento=("IS_PAGO", "max"),
+            teve_em_aberto=("IS_EM_ABERTO", "max"),
+            teve_nao_pagou=("IS_NAO_PAGOU", "max"),
+        )
+        .reset_index()
+    )
+    cpc_resultado_geral = cpc_eventos_geral.merge(resultado_cliente_geral, on="CPC_CLIENT_KEY", how="left")
+    cpc_resultado_geral["qtd_acordos"] = cpc_resultado_geral["qtd_acordos"].fillna(0)
+    cpc_resultado_geral["teve_pagamento"] = cpc_resultado_geral["teve_pagamento"].fillna(False).astype(bool)
+    cpc_resultado_geral["teve_em_aberto"] = cpc_resultado_geral["teve_em_aberto"].fillna(False).astype(bool)
+    cpc_resultado_geral["teve_nao_pagou"] = cpc_resultado_geral["teve_nao_pagou"].fillna(False).astype(bool)
+
+    _unicos_total = float(len(cpc_eventos_geral))
+    _acordos_geral = int((cpc_resultado_geral["qtd_acordos"] > 0).sum())
+    _pagamentos_geral = int(cpc_resultado_geral["teve_pagamento"].sum())
+    _em_aberto_geral = int(cpc_resultado_geral["teve_em_aberto"].sum())
+    _nao_pagou_geral = int(cpc_resultado_geral["teve_nao_pagou"].sum())
+    _tx_acordo_geral = _acordos_geral / _unicos_total if _unicos_total else 0
+    _tx_pag_geral = _pagamentos_geral / _unicos_total if _unicos_total else 0
 
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     with c1:
-        metric_card("CPCs únicos", num_fmt(cpc_df["cpcs_unicos"].sum()))
+        metric_card("CPCs únicos", num_fmt(_unicos_total))
     with c2:
         metric_card("Tx CPC único → acordo", pct_fmt(_tx_acordo_geral))
     with c3:
         metric_card("Tx CPC único → pagto", pct_fmt(_tx_pag_geral))
     with c4:
-        metric_card("Acordos após CPC", num_fmt(cpc_df["acordos"].sum()))
+        metric_card("Acordos após CPC", num_fmt(_acordos_geral))
     with c5:
-        metric_card("Pagamentos", num_fmt(cpc_df["pagamentos"].sum()))
+        metric_card("Pagamentos", num_fmt(_pagamentos_geral))
     with c6:
-        metric_card("Em aberto", num_fmt(cpc_df["acordos_em_aberto"].sum()))
+        metric_card("Em aberto", num_fmt(_em_aberto_geral))
     with c7:
-        metric_card("Não pagou", num_fmt(cpc_df["acordos_nao_pagou"].sum()))
+        metric_card("Não pagou", num_fmt(_nao_pagou_geral))
 
     c1, c2 = st.columns(2)
     with c1:
