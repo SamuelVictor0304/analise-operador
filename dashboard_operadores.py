@@ -1615,6 +1615,70 @@ def aggregate_cpc_operator(eventos, resultados):
     return df.sort_values(["pagamentos", "valor_pago", "tx_cpc_pagamento"], ascending=False)
 
 
+FAIXA_ATRASO_ORDER = ["000-030", "031-060", "061-090", "091-120", "121-180", "181-360", "361+"]
+
+
+def aggregate_operator_faixa(eventos, resultados):
+    ev = eventos.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True).agg(
+        acionamentos=("EVENTO_TXT", "size"),
+        cpcs=("IS_CPC", "sum"),
+    ).reset_index()
+    rs = resultados.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True).agg(
+        acordos=("CONTRATO_KEY", "count"),
+        pagamentos=("IS_PAGO", "sum"),
+        valor_pago=("VALOR_PAGO", "sum"),
+    ).reset_index()
+    df = ev.merge(rs, on=["OPERADOR", "FAIXA_ATRASO"], how="outer").fillna(0)
+    df = df[df["FAIXA_ATRASO"].isin(FAIXA_ATRASO_ORDER)]
+    df["tx_contato"] = safe_div(df["cpcs"], df["acionamentos"])
+    df["tx_acordo"] = safe_div(df["acordos"], df["cpcs"])
+    df["tx_pagamento_cpc"] = safe_div(df["pagamentos"], df["cpcs"])
+    return df
+
+
+def melhor_faixa_por_operador(faixa_operador_df, min_cpcs=5):
+    elegivel = faixa_operador_df[faixa_operador_df["cpcs"] >= min_cpcs].copy()
+    if elegivel.empty:
+        return pd.DataFrame()
+
+    melhor_cpc = (
+        elegivel.sort_values(["OPERADOR", "tx_contato"], ascending=[True, False])
+        .groupby("OPERADOR")
+        .head(1)[["OPERADOR", "FAIXA_ATRASO", "tx_contato", "acionamentos", "cpcs"]]
+        .rename(columns={"FAIXA_ATRASO": "Melhor faixa (contato → CPC)", "tx_contato": "_tx_contato", "acionamentos": "_acion_cpc", "cpcs": "_cpcs_cpc"})
+    )
+    melhor_conversao = (
+        elegivel.sort_values(["OPERADOR", "tx_pagamento_cpc"], ascending=[True, False])
+        .groupby("OPERADOR")
+        .head(1)[["OPERADOR", "FAIXA_ATRASO", "tx_pagamento_cpc", "cpcs", "pagamentos", "valor_pago"]]
+        .rename(columns={"FAIXA_ATRASO": "Melhor faixa (CPC → pagamento)", "tx_pagamento_cpc": "_tx_pgto", "cpcs": "_cpcs_pgto", "pagamentos": "_pagtos_pgto", "valor_pago": "_valor_pgto"})
+    )
+    out = melhor_cpc.merge(melhor_conversao, on="OPERADOR", how="outer")
+    out["Taxa contato → CPC"] = out["_tx_contato"].map(pct_fmt)
+    out["Acionamentos na faixa"] = out["_acion_cpc"].map(num_fmt)
+    out["CPCs na faixa (contato)"] = out["_cpcs_cpc"].map(num_fmt)
+    out["Taxa CPC → pagamento"] = out["_tx_pgto"].map(pct_fmt)
+    out["CPCs na faixa (conversão)"] = out["_cpcs_pgto"].map(num_fmt)
+    out["Pagamentos na faixa"] = out["_pagtos_pgto"].map(num_fmt)
+    out["Valor recebido na faixa"] = out["_valor_pgto"].map(money_fmt)
+    out["_ordenacao"] = out["_valor_pgto"]
+    out = out.sort_values("_ordenacao", ascending=False)
+    return out[
+        [
+            "OPERADOR",
+            "Melhor faixa (contato → CPC)",
+            "Taxa contato → CPC",
+            "Acionamentos na faixa",
+            "CPCs na faixa (contato)",
+            "Melhor faixa (CPC → pagamento)",
+            "Taxa CPC → pagamento",
+            "CPCs na faixa (conversão)",
+            "Pagamentos na faixa",
+            "Valor recebido na faixa",
+        ]
+    ].rename(columns={"OPERADOR": "Operador"})
+
+
 def aggregate_resultados(resultados, dimension):
     df = resultados.groupby(dimension, dropna=False).agg(
         clientes=("CONTRATO_KEY", "nunique"),
@@ -3097,6 +3161,7 @@ eventos, resultados = ensure_cpc_client_key(eventos, resultados)
 eventos_raw, resultados_raw = ensure_cpc_client_key(eventos_raw, resultados_raw)
 operador_df = aggregate_operator(eventos, resultados)
 cpc_df = aggregate_cpc_operator(eventos, resultados)
+faixa_operador_df = aggregate_operator_faixa(eventos, resultados)
 workplan_df = build_workplan_analysis(workplan_raw, eventos_raw[eventos_raw["IS_ACIONAMENTO"]], resultados_raw)
 
 st.title("Performance Operacional por Operador")
@@ -3299,6 +3364,52 @@ with tabs[1]:
         "score",
     ]
     data_table(operador_df[cols])
+
+    st.markdown("---")
+    st.subheader("Melhor faixa de atraso por operador")
+    st.caption(
+        "Para cada operador, a faixa de atraso (DPD) onde ele tem a melhor taxa de contato → CPC "
+        "e a melhor conversão CPC → pagamento. Mínimo de 5 CPCs na faixa para entrar no ranking."
+    )
+    melhor_faixa_df = melhor_faixa_por_operador(faixa_operador_df, min_cpcs=5)
+    if melhor_faixa_df.empty:
+        st.info("Nenhum operador atingiu o mínimo de CPCs por faixa para esse recorte de filtros.")
+    else:
+        stretch_dataframe(melhor_faixa_df, hide_index=True)
+
+        heatmap_operadores = operador_df.head(15)["OPERADOR"].tolist()
+        heatmap_base = faixa_operador_df[
+            faixa_operador_df["OPERADOR"].isin(heatmap_operadores) & (faixa_operador_df["cpcs"] >= 5)
+        ].copy()
+        if not heatmap_base.empty:
+            heatmap_faixa_chart = (
+                alt.Chart(heatmap_base)
+                .mark_rect()
+                .encode(
+                    x=alt.X("FAIXA_ATRASO:N", title="Faixa de atraso", sort=FAIXA_ATRASO_ORDER),
+                    y=alt.Y("OPERADOR:N", title=None, sort=heatmap_operadores),
+                    color=alt.Color(
+                        "tx_pagamento_cpc:Q",
+                        scale=alt.Scale(scheme="tealblues"),
+                        title="CPC → pagamento",
+                        legend=alt.Legend(format="%"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("OPERADOR:N", title="Operador"),
+                        alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
+                        alt.Tooltip("acionamentos:Q", title="Acionamentos", format=","),
+                        alt.Tooltip("cpcs:Q", title="CPCs", format=","),
+                        alt.Tooltip("acordos:Q", title="Acordos", format=","),
+                        alt.Tooltip("pagamentos:Q", title="Pagamentos", format=","),
+                        alt.Tooltip("tx_contato:Q", title="Contato → CPC", format=".1%"),
+                        alt.Tooltip("tx_pagamento_cpc:Q", title="CPC → pagamento", format=".1%"),
+                    ],
+                )
+                .properties(height=max(320, 24 * len(heatmap_operadores)), title="Conversão CPC → pagamento por operador e faixa de atraso (top 15 operadores)")
+            )
+            stretch_altair_chart(heatmap_faixa_chart)
+        else:
+            st.info("Sem faixas com volume mínimo de CPCs para os operadores em destaque.")
 
 with tabs[2]:
     st.subheader("Conversão CPC para acordos e pagamentos")
