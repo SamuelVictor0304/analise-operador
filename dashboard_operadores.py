@@ -3394,67 +3394,69 @@ with tabs[1]:
     else:
         stretch_dataframe(melhor_faixa_df, hide_index=True)
 
-        heatmap_operadores = operador_df.head(15)["OPERADOR"].tolist()
-        heatmap_labels = [format_operator_label(op) for op in heatmap_operadores]
-        heatmap_grid = pd.DataFrame(
-            [(op, faixa) for op in heatmap_operadores for faixa in FAIXA_ATRASO_ORDER],
-            columns=["OPERADOR", "FAIXA_ATRASO"],
-        )
-        heatmap_base = heatmap_grid.merge(
-            faixa_operador_df[faixa_operador_df["OPERADOR"].isin(heatmap_operadores)],
-            on=["OPERADOR", "FAIXA_ATRASO"],
-            how="left",
-        )
-        for col in ["acionamentos", "cpcs", "acordos", "pagamentos", "valor_pago", "tx_contato", "tx_pagamento_cpc"]:
-            heatmap_base[col] = heatmap_base[col].fillna(0)
-        heatmap_base["OPERADOR_LABEL"] = heatmap_base["OPERADOR"].map(format_operator_label)
-        heatmap_base["tem_base"] = heatmap_base["cpcs"] >= 5
-        heatmap_com_base = heatmap_base[heatmap_base["tem_base"]]
+        top_n_faixa = 9
+        destaque_operadores = operador_df.head(top_n_faixa)["OPERADOR"].tolist()
+        destaque_labels = [format_operator_label(op) for op in destaque_operadores]
 
-        dominio_max = 0.15
-        if not heatmap_com_base.empty:
-            dominio_max = float(np.clip(heatmap_com_base["tx_pagamento_cpc"].quantile(0.9), 0.05, 1.0))
+        pequenos_multiplos = faixa_operador_df[
+            faixa_operador_df["OPERADOR"].isin(destaque_operadores) & (faixa_operador_df["cpcs"] >= 5)
+        ].copy()
+        if pequenos_multiplos.empty:
+            st.info("Sem faixas com volume mínimo de CPCs para os operadores em destaque.")
+        else:
+            pequenos_multiplos["OPERADOR_LABEL"] = pequenos_multiplos["OPERADOR"].map(format_operator_label)
+            melhor_idx = (
+                pequenos_multiplos.sort_values("tx_pagamento_cpc", ascending=False).groupby("OPERADOR").head(1).index
+            )
+            pequenos_multiplos["destaque"] = "Demais faixas"
+            pequenos_multiplos.loc[melhor_idx, "destaque"] = "Melhor faixa"
+            pequenos_multiplos["rotulo_melhor"] = np.where(
+                pequenos_multiplos["destaque"].eq("Melhor faixa"),
+                pequenos_multiplos["tx_pagamento_cpc"].map(pct_fmt),
+                "",
+            )
 
-        fundo = (
-            alt.Chart(heatmap_base)
-            .mark_rect()
-            .encode(
-                x=alt.X("FAIXA_ATRASO:N", title="Faixa de atraso", sort=FAIXA_ATRASO_ORDER, axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("OPERADOR_LABEL:N", title=None, sort=heatmap_labels, axis=alt.Axis(labelLimit=220)),
-                color=alt.value("#e3e7ea"),
-                tooltip=alt.value(None),
+            barras = (
+                alt.Chart(pequenos_multiplos)
+                .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, size=18)
+                .encode(
+                    x=alt.X("FAIXA_ATRASO:N", title=None, sort=FAIXA_ATRASO_ORDER, axis=alt.Axis(labelAngle=0, labelFontSize=9)),
+                    y=alt.Y("tx_pagamento_cpc:Q", title=None, axis=alt.Axis(format="%", labelFontSize=9)),
+                    color=alt.Color(
+                        "destaque:N",
+                        scale=alt.Scale(domain=["Melhor faixa", "Demais faixas"], range=[CORP_PALETTE[1], CORP_PALETTE[3]]),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("OPERADOR_LABEL:N", title="Operador"),
+                        alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
+                        alt.Tooltip("cpcs:Q", title="CPCs", format=","),
+                        alt.Tooltip("pagamentos:Q", title="Pagamentos", format=","),
+                        alt.Tooltip("tx_pagamento_cpc:Q", title="CPC → pagamento", format=".1%"),
+                    ],
+                )
             )
-        )
-        celulas = (
-            alt.Chart(heatmap_com_base)
-            .mark_rect()
-            .encode(
-                x=alt.X("FAIXA_ATRASO:N", sort=FAIXA_ATRASO_ORDER),
-                y=alt.Y("OPERADOR_LABEL:N", sort=heatmap_labels),
-                color=alt.Color(
-                    "tx_pagamento_cpc:Q",
-                    scale=alt.Scale(scheme="tealblues", domain=[0, dominio_max], clamp=True),
-                    title="CPC → pagamento",
-                    legend=alt.Legend(format="%"),
-                ),
-                tooltip=[
-                    alt.Tooltip("OPERADOR_LABEL:N", title="Operador"),
-                    alt.Tooltip("FAIXA_ATRASO:N", title="Faixa"),
-                    alt.Tooltip("acionamentos:Q", title="Acionamentos", format=","),
-                    alt.Tooltip("cpcs:Q", title="CPCs", format=","),
-                    alt.Tooltip("acordos:Q", title="Acordos", format=","),
-                    alt.Tooltip("pagamentos:Q", title="Pagamentos", format=","),
-                    alt.Tooltip("tx_contato:Q", title="Contato → CPC", format=".1%"),
-                    alt.Tooltip("tx_pagamento_cpc:Q", title="CPC → pagamento", format=".1%"),
-                ],
+            rotulos = (
+                alt.Chart(pequenos_multiplos)
+                .mark_text(dy=-6, fontSize=9, fontWeight="bold", color=CORP_PALETTE[1])
+                .encode(
+                    x=alt.X("FAIXA_ATRASO:N", sort=FAIXA_ATRASO_ORDER),
+                    y=alt.Y("tx_pagamento_cpc:Q"),
+                    text="rotulo_melhor:N",
+                )
             )
-        )
-        heatmap_faixa_chart = (fundo + celulas).properties(
-            height=max(320, 30 * len(heatmap_operadores)),
-            title="Conversão CPC → pagamento por operador e faixa de atraso (top 15 operadores)",
-        )
-        st.caption("Células cinza indicam menos de 5 CPCs na faixa: sem base para comparar a taxa.")
-        stretch_altair_chart(heatmap_faixa_chart)
+            pequenos_multiplos_chart = (
+                (barras + rotulos)
+                .properties(width=190, height=130)
+                .facet(
+                    facet=alt.Facet("OPERADOR_LABEL:N", title=None, sort=destaque_labels),
+                    columns=3,
+                )
+                .resolve_scale(y="independent")
+                .properties(title=f"Conversão CPC → pagamento por faixa de atraso (top {top_n_faixa} operadores)")
+            )
+            st.caption("Barra destacada = faixa com melhor conversão CPC → pagamento do operador. Faixas sem barra: menos de 5 CPCs, sem base.")
+            stretch_altair_chart(pequenos_multiplos_chart)
 
 with tabs[2]:
     st.subheader("Conversão CPC para acordos e pagamentos")
