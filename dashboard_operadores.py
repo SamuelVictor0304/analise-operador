@@ -24,7 +24,9 @@ POST_REPOSSESSED_GOAL = 900000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
 IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
 ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
-DEFAULT_RESULT_MONTH = "JULHO"
+DEFAULT_RESULT_MONTH = "AGOSTO"
+GOAL_FALLBACK_SOURCE_MONTH = "JULHO"
+GOAL_FALLBACK_TARGET_MONTH = "AGOSTO"
 OPERATIONAL_BUSINESS_DAY_TOTALS = {
     (2026, 7): 23,
 }
@@ -259,6 +261,14 @@ def normalize_status(value):
 
 def normalize_month_key(value):
     return normalize_status(value)
+
+
+def carry_over_month_goal(goals, source_month=GOAL_FALLBACK_SOURCE_MONTH, target_month=GOAL_FALLBACK_TARGET_MONTH):
+    source_key = normalize_month_key(source_month)
+    target_key = normalize_month_key(target_month)
+    if goals.get(target_key, 0) <= 0 and goals.get(source_key, 0) > 0:
+        goals[target_key] = goals[source_key]
+    return goals
 
 
 def normalize_contract(value):
@@ -583,7 +593,9 @@ def load_office_goals(data_version):
                 break
         if target_col is not None:
             goals[normalize_month_key(month)] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
-    return {k: float(v) for k, v in goals.items() if pd.notna(v)}
+    goals = {k: float(v) for k, v in goals.items() if pd.notna(v)}
+    # Meta de agosto ainda nao cadastrada na aba METAS: reaproveita a meta de julho por enquanto.
+    return carry_over_month_goal(goals)
 
 
 @st.cache_data(show_spinner=False)
@@ -677,7 +689,13 @@ def load_region_goals(data_version):
                 }
             )
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # Meta regional de agosto ainda nao cadastrada na aba METAS: reaproveita a meta de julho por enquanto.
+        fonte = df.loc[df["MES_RESULTADO"] == GOAL_FALLBACK_SOURCE_MONTH].set_index("REGIAO_KEY")["meta_regiao"]
+        alvo_mask = (df["MES_RESULTADO"] == GOAL_FALLBACK_TARGET_MONTH) & (df["meta_regiao"] <= 0)
+        df.loc[alvo_mask, "meta_regiao"] = df.loc[alvo_mask, "REGIAO_KEY"].map(fonte).fillna(0)
+    return df
 
 
 def build_region_goal_map(months, resultados=None):
