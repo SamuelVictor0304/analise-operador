@@ -3810,8 +3810,13 @@ with tabs[2]:
     data_table(cpc_df[cpc_cols])
 
 with tabs[3]:
-    faixa_df = aggregate_resultados(resultados, "FAIXA_ATRASO")
-    ev_faixa = eventos.groupby("FAIXA_ATRASO").agg(acionamentos=("EVENTO_TXT", "size"), contatos_efetivos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
+    pos_retomado_contratos = set(resultados.loc[resultados["CAMPANHA"].map(is_pos_retomado), "CONTRATO_KEY"])
+    resultados_faixa = resultados[~resultados["CAMPANHA"].map(is_pos_retomado)].copy()
+    eventos_faixa = eventos[~eventos["CONTRATO_KEY"].isin(pos_retomado_contratos)].copy()
+    st.caption("Contratos da campanha Pós Retomado são excluídos desta análise por faixa de atraso.")
+
+    faixa_df = aggregate_resultados(resultados_faixa, "FAIXA_ATRASO")
+    ev_faixa = eventos_faixa.groupby("FAIXA_ATRASO").agg(acionamentos=("EVENTO_TXT", "size"), contatos_efetivos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
     faixa_df = faixa_df.merge(ev_faixa, on="FAIXA_ATRASO", how="outer").fillna(0)
     faixa_df["tx_contato"] = safe_div(faixa_df["contatos_efetivos"], faixa_df["acionamentos"])
     faixa_chart = display_fields(faixa_df)
@@ -3881,7 +3886,7 @@ with tabs[3]:
         )
 
     best_faixa = (
-        resultados.groupby(["FAIXA_ATRASO", "OPERADOR"])
+        resultados_faixa.groupby(["FAIXA_ATRASO", "OPERADOR"])
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -3896,7 +3901,7 @@ with tabs[3]:
     best_faixa["tx_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["acordos"])
     best_faixa["efetividade_pagamento"] = safe_div(best_faixa["pagamentos"], best_faixa["pagamentos"] + best_faixa["acordos_nao_pagou"])
     best_faixa["valor_quebra"] = best_faixa["valor_nao_pagou"]
-    best_faixa["meta_individual"] = operator_goal_series(best_faixa["OPERADOR"], selected_months_count(resultados))
+    best_faixa["meta_individual"] = operator_goal_series(best_faixa["OPERADOR"], selected_months_count(resultados_faixa))
     best_faixa["pct_quebra"] = safe_div(best_faixa["valor_quebra"], best_faixa["meta_individual"])
     best_faixa = best_faixa.sort_values(["FAIXA_ATRASO", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("FAIXA_ATRASO").head(1)
     st.subheader("Melhor operador por faixa")
