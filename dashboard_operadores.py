@@ -410,10 +410,21 @@ def streamlit_secret_value(name, default=""):
         return default
 
 
+def config_value(name, secrets, default=""):
+    return os.getenv(name) or streamlit_secret_value(name) or secrets.get(name.lower(), default)
+
+
 def postgres_config():
     secrets = streamlit_secret_section("postgres")
+    supabase_ref = config_value("SUPABASE_PROJECT_REF", secrets)
+    supabase_password = config_value("SUPABASE_DB_PASSWORD", secrets)
+    supabase_user = config_value("SUPABASE_DB_USER", secrets, "postgres")
+    supabase_port = int(config_value("SUPABASE_DB_PORT", secrets, "6543"))
+    supabase_host = config_value("SUPABASE_DB_HOST", secrets, "aws-1-sa-east-1.pooler.supabase.com")
     database_url = (
-        os.getenv("SUPABASE_DB_URL")
+        ""
+        if supabase_ref and supabase_password
+        else os.getenv("SUPABASE_DB_URL")
         or os.getenv("DATABASE_URL")
         or streamlit_secret_value("SUPABASE_DB_URL")
         or streamlit_secret_value("supabase_db_url")
@@ -431,16 +442,30 @@ def postgres_config():
             secrets.get("database"),
             secrets.get("user"),
             secrets.get("password"),
+            supabase_ref,
+            supabase_password,
         ]
     )
+    if supabase_ref and supabase_password:
+        host = supabase_host
+        port = supabase_port
+        database = "postgres"
+        user = f"{supabase_user}.{supabase_ref}"
+        password = supabase_password
+    else:
+        host = os.getenv("PGHOST", secrets.get("host", POSTGRES_DEFAULTS["host"]))
+        port = int(os.getenv("PGPORT", secrets.get("port", POSTGRES_DEFAULTS["port"])))
+        database = os.getenv("PGDATABASE", secrets.get("database", POSTGRES_DEFAULTS["database"]))
+        user = os.getenv("PGUSER", secrets.get("user", POSTGRES_DEFAULTS["user"]))
+        password = os.getenv("PGPASSWORD", secrets.get("password", POSTGRES_DEFAULTS["password"]))
     return {
         "database_url": database_url,
         "configured": bool(database_url or has_connection_parts),
-        "host": os.getenv("PGHOST", secrets.get("host", POSTGRES_DEFAULTS["host"])),
-        "port": int(os.getenv("PGPORT", secrets.get("port", POSTGRES_DEFAULTS["port"]))),
-        "database": os.getenv("PGDATABASE", secrets.get("database", POSTGRES_DEFAULTS["database"])),
-        "user": os.getenv("PGUSER", secrets.get("user", POSTGRES_DEFAULTS["user"])),
-        "password": os.getenv("PGPASSWORD", secrets.get("password", POSTGRES_DEFAULTS["password"])),
+        "host": host,
+        "port": port,
+        "database": database,
+        "user": user,
+        "password": password,
         "schema": os.getenv("PGSCHEMA", secrets.get("schema", POSTGRES_DEFAULTS["schema"])),
         "table": os.getenv("PGTABLE", secrets.get("table", POSTGRES_DEFAULTS["table"])),
     }
