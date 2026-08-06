@@ -2713,25 +2713,47 @@ def workplan_analytics_section(workplan_view):
         )
         stretch_altair_chart(fpd_epd_chart)
 
-    st.markdown("#### Exportar clientes por prioridade")
-    export_prioridades = st.multiselect(
-        "Prioridade para exportar",
-        ["Alta", "MÃƒÂ©dia", "Baixa"],
-        default=["Alta"],
-        key="workplan_export_prioridades",
-    )
-    motivos_opcoes = motivo_df["motivo_abordagem"].dropna().tolist()
-    export_motivos = st.multiselect(
-        "Motivo de abordagem para exportar",
-        motivos_opcoes,
-        default=[],
-        key="workplan_export_motivos",
-    )
+    st.markdown("#### Exportar clientes por prioridade e perfil")
+    st.caption("Filtre pelo perfil do cliente (segmento DPD / faixa de atraso) e baixe a lista para a operação prospectar e cobrar.")
+    exp1, exp2 = st.columns(2)
+    with exp1:
+        export_prioridades = st.multiselect(
+            "Prioridade para exportar",
+            ["Alta", "MÃƒÂ©dia", "Baixa"],
+            default=["Alta"],
+            key="workplan_export_prioridades",
+        )
+        motivos_opcoes = motivo_df["motivo_abordagem"].dropna().tolist()
+        export_motivos = st.multiselect(
+            "Motivo de abordagem para exportar",
+            motivos_opcoes,
+            default=[],
+            key="workplan_export_motivos",
+        )
+    with exp2:
+        segmentos_export_opcoes = sorted(workplan_view["SEGMENTO_DPD"].dropna().unique().tolist()) if "SEGMENTO_DPD" in workplan_view.columns else []
+        export_segmentos = st.multiselect(
+            "Segmento DPD (tipo de cliente) para exportar",
+            segmentos_export_opcoes,
+            default=[],
+            key="workplan_export_segmentos",
+        )
+        faixas_export_opcoes = sorted(workplan_view["FAIXA_ATRASO"].dropna().unique().tolist()) if "FAIXA_ATRASO" in workplan_view.columns else []
+        export_faixas = st.multiselect(
+            "Faixa de atraso para exportar",
+            faixas_export_opcoes,
+            default=[],
+            key="workplan_export_faixas",
+        )
     export_clientes = workplan_view.copy()
     if export_prioridades:
         export_clientes = export_clientes[export_clientes["prioridade_workplan"].isin(export_prioridades)]
     if export_motivos:
         export_clientes = export_clientes[export_clientes["motivo_abordagem"].isin(export_motivos)]
+    if export_segmentos:
+        export_clientes = export_clientes[export_clientes["SEGMENTO_DPD"].isin(export_segmentos)]
+    if export_faixas:
+        export_clientes = export_clientes[export_clientes["FAIXA_ATRASO"].isin(export_faixas)]
     export_clientes = export_clientes.sort_values(["valor_esperado_recuperacao", "score_recuperacao"], ascending=False)
     export_cols = [
         "agreement_no",
