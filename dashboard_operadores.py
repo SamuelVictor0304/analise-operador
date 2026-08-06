@@ -27,6 +27,7 @@ ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
 DEFAULT_RESULT_MONTH = "AGOSTO"
 GOAL_FALLBACK_SOURCE_MONTH = "JULHO"
 GOAL_FALLBACK_TARGET_MONTH = "AGOSTO"
+MIN_PERFIL_CONTRATOS = 20
 OPERATIONAL_BUSINESS_DAY_TOTALS = {
     (2026, 7): 23,
     (2026, 8): 21,
@@ -1875,11 +1876,13 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
     if "UF" in hist.columns and "uf" not in hist.columns:
         hist["uf"] = hist["UF"]
 
+    # PRODUTO nao entra no perfil: a carteira toda e do mesmo tipo de divida/produto,
+    # entao essa coluna nao discrimina nada e so deixaria os grupos mais rasos de amostra.
     profile_sets = [
-        ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "PRODUTO", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
+        ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
         ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa"],
         ["inadimplencia_precoce_tipo", "SEGMENTO_DPD", "FAIXA_ATRASO", "flag_cpc_perfil"],
-        ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "PRODUTO", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
+        ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa", "dias_sem_contato_faixa"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "uf", "flag_cpc_perfil", "valor_faixa"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "REGIÃO", "flag_cpc_perfil"],
         ["SEGMENTO_DPD", "FAIXA_ATRASO", "flag_cpc_perfil"],
@@ -1964,12 +1967,20 @@ def apply_recovery_profile_rates(workplan_df, profile_rates, global_rates):
         lookup = rates.set_index("_profile_key")[metric_cols].to_dict("index")
         keys = profile_key(df, cols)
         matched = keys.map(lookup)
-        mask = matched.notna() & df["base_probabilidade"].eq("Média geral")
+        matched_valid = matched.notna()
+        if not matched_valid.any():
+            continue
+        # Alinha ao index completo do df: NaN nas linhas que essa camada de perfil nao encontrou.
+        matched_df = pd.DataFrame(matched[matched_valid].tolist(), index=df.index[matched_valid]).reindex(df.index)
+        # So aceita esta camada se o perfil tiver amostra minima; senao cai pra camada mais generica.
+        mask = (
+            matched_df["contratos_hist"].fillna(0).ge(MIN_PERFIL_CONTRATOS)
+            & df["base_probabilidade"].eq("Média geral")
+        )
         if not mask.any():
             continue
-        matched_df = pd.DataFrame(matched[mask].tolist(), index=df.index[mask])
         for col in metric_cols:
-            df.loc[mask, col] = matched_df[col]
+            df.loc[mask, col] = matched_df.loc[mask, col]
         df.loc[mask, "base_probabilidade"] = "Perfil: " + " + ".join(cols)
 
     return df
