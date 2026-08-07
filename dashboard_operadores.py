@@ -581,7 +581,7 @@ def load_collaborators():
     return judicial.drop_duplicates("OPERADOR")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def load_office_goals(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
@@ -625,7 +625,7 @@ def load_office_goals(data_version):
     return carry_over_month_goal(goals)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def load_office_received(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
@@ -666,7 +666,7 @@ def load_office_received(data_version):
     return {k: float(v) for k, v in received.items() if pd.notna(v)}
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def load_region_goals(data_version):
     metas = pd.read_excel(RESULTADOS_FILE, sheet_name="METAS", header=None)
     header_idx = metas.index[metas.iloc[:, 0].astype(str).str.strip().str.upper().eq("NEGOCIADOR")]
@@ -1339,7 +1339,7 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     return df.sort_values(["score_recuperacao", "total_amount_due"], ascending=False)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def load_data(data_version):
     eventos = pd.read_excel(EVENTOS_FILE, sheet_name="Eventos", usecols=[0, 1, 4, 7, 8, 11])
     clientes_file = latest_file("Pesquisa-Cliente-908-*.xlsx")
