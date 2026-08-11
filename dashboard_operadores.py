@@ -19,11 +19,22 @@ RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ()
-DEFAULT_OPERATOR_GOAL = 200000
-POST_REPOSSESSED_GOAL = 900000
+POST_REPOSSESSED_GOAL = 800000
 SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
-IGNORED_META_OPERATORS = {"luiz.mauro", "cecilia.bonfim", "edmilson.silva"}
-ALWAYS_INCLUDED_NEGOTIATORS = {"gabriela.rodrigues1"}
+REGULAR_OPERATOR_GOAL = 190000
+REGULAR_META_OPERATORS = {
+    "ana.karolina.oliveira",
+    "fabricio.felipe",
+    "felipe.alves.rocha",
+    "giovanna.miranda",
+    "helen.maria",
+    "marilene.feitosa",
+    "erick.rafael",
+    "mauricio.oliveira",
+    "max.silva1",
+}
+# Meta so existe pra esses 10: quem nao esta aqui nao esta mais negociando/no escritorio.
+ACTIVE_META_OPERATORS = set(SPECIAL_OPERATOR_GOALS) | REGULAR_META_OPERATORS
 DEFAULT_RESULT_MONTH = "AGOSTO"
 GOAL_FALLBACK_SOURCE_MONTH = "JULHO"
 GOAL_FALLBACK_TARGET_MONTH = "AGOSTO"
@@ -540,8 +551,9 @@ def office_goal_for_months(months):
 
 def operator_goal_series(operadores, meses_count):
     operadores = operadores.fillna("")
-    base_goal = operadores.map(SPECIAL_OPERATOR_GOALS).fillna(DEFAULT_OPERATOR_GOAL)
-    base_goal = base_goal.where(~operadores.isin(IGNORED_META_OPERATORS), 0)
+    base_goal = operadores.map(SPECIAL_OPERATOR_GOALS)
+    base_goal = base_goal.where(~operadores.isin(REGULAR_META_OPERATORS), REGULAR_OPERATOR_GOAL)
+    base_goal = base_goal.fillna(0)
     return pd.Series(base_goal * meses_count, index=operadores.index)
 
 
@@ -938,7 +950,7 @@ def region_meta_map(region_df, title):
 
 def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     colaboradores = load_collaborators()
-    missing_negotiators = ALWAYS_INCLUDED_NEGOTIATORS - set(colaboradores["OPERADOR"].dropna())
+    missing_negotiators = ACTIVE_META_OPERATORS - set(colaboradores["OPERADOR"].dropna())
     if missing_negotiators:
         colaboradores = pd.concat(
             [
@@ -961,7 +973,7 @@ def build_meta_analysis(operador_df, resultados, operadores_scope=None):
     meta_geral = office_goal_for_months(meses)
 
     operadores_base = colaboradores[["OPERADOR"]].drop_duplicates()
-    operadores_base = operadores_base[~operadores_base["OPERADOR"].isin(IGNORED_META_OPERATORS)].copy()
+    operadores_base = operadores_base[operadores_base["OPERADOR"].isin(ACTIVE_META_OPERATORS)].copy()
     df = operadores_base.merge(operador_df, on="OPERADOR", how="left")
     df = df.merge(colaboradores, on="OPERADOR", how="left")
     metric_cols = [
