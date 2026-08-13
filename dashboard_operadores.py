@@ -69,10 +69,11 @@ def stretch_dataframe(df, **kwargs):
 
 
 def html_block(html, height=None):
-    if hasattr(st, "html"):
-        st.html(html)
-    else:
-        components.html(html, height=height)
+    # st.html() nao renderiza <svg> embutido nesta versao do Streamlit (mesmo um SVG
+    # trivial fica em branco). st.markdown reprocessa como Markdown antes do HTML
+    # (linhas indentadas viram bloco de codigo). components.html usa um iframe puro,
+    # sem nenhuma das duas reescritas, e renderiza o conteudo exatamente como foi montado.
+    components.html(html, height=height or 620, scrolling=False)
 
 
 def latest_file(pattern):
@@ -4236,7 +4237,7 @@ with tabs[6]:
 
 with tabs[7]:
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R$ 200.000 por negociador; Victor Lima usa a meta individual de R$ 900.000 referente aos casos de pós retomado.")
+    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R\\$ 190.000 para os 9 negociadores regulares; Victor Lima usa a meta individual de R\\$ 800.000 referente aos casos de pós retomado.")
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
