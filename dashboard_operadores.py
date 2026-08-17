@@ -2204,20 +2204,14 @@ def business_day_clock_details(month_labels, today=None):
         month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
         month_end = month_start + pd.offsets.MonthEnd(0)
         month_business_days = pd.bdate_range(month_start, month_end)
-        previous_month_start = month_start - pd.offsets.MonthBegin(1)
-        previous_month_end = month_start - pd.Timedelta(days=1)
-        previous_month_business_days = pd.bdate_range(previous_month_start, previous_month_end)
-        period_start = previous_month_business_days[-1] if len(previous_month_business_days) else previous_month_end
-        period_end = month_business_days[-2] if len(month_business_days) >= 2 else month_end
-        period_business_days = pd.bdate_range(period_start, period_end)
-        period_business_days = period_business_days[~period_business_days.normalize().isin(operational_holidays)]
-        month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(period_business_days))
+        month_business_days = month_business_days[~month_business_days.normalize().isin(operational_holidays)]
+        month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(month_business_days))
         elapsed_for_month = 0
         total_days += month_total_days
-        if today >= period_end:
+        if today >= month_end:
             elapsed_for_month = month_total_days
-        elif today >= period_start:
-            elapsed_for_month = min(len(period_business_days[period_business_days <= today]), month_total_days)
+        elif today >= month_start:
+            elapsed_for_month = min(len(month_business_days[month_business_days <= today]), month_total_days)
         elapsed_days += elapsed_for_month
         remaining_days += max(month_total_days - elapsed_for_month, 0)
 
