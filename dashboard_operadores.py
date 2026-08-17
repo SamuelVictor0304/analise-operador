@@ -10,7 +10,6 @@ import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 BASE_DIR = Path(__file__).parent
@@ -71,9 +70,9 @@ def stretch_dataframe(df, **kwargs):
 def html_block(html, height=None):
     # st.html() nao renderiza <svg> embutido nesta versao do Streamlit (mesmo um SVG
     # trivial fica em branco). st.markdown reprocessa como Markdown antes do HTML
-    # (linhas indentadas viram bloco de codigo). components.html usa um iframe puro,
-    # sem nenhuma das duas reescritas, e renderiza o conteudo exatamente como foi montado.
-    components.html(html, height=height or 620, scrolling=False)
+    # (linhas indentadas viram bloco de codigo). st.iframe usa um iframe puro, sem
+    # nenhuma das duas reescritas, e renderiza o conteudo exatamente como foi montado.
+    st.iframe(html, height=height or "content", width="stretch")
 
 
 def latest_file(pattern):
