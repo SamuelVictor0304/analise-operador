@@ -550,7 +550,7 @@ def office_goal_for_months(months):
 
 
 def operator_goal_series(operadores, meses_count):
-    operadores = operadores.fillna("")
+    operadores = operadores.astype(object).fillna("")
     base_goal = operadores.map(SPECIAL_OPERATOR_GOALS)
     base_goal = base_goal.where(~operadores.isin(REGULAR_META_OPERATORS), REGULAR_OPERATOR_GOAL)
     base_goal = base_goal.fillna(0)
@@ -754,7 +754,7 @@ def build_region_goal_map(months, resultados=None):
         month_keys = [latest_month]
 
     df = (
-        selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False)
+        selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False, observed=True)
         .agg(meta_regiao=("meta_regiao", "sum"))
         .reset_index()
     )
@@ -768,7 +768,7 @@ def build_region_goal_map(months, resultados=None):
             pagos = pagos[pagos["MES_RESULTADO"].isin(month_keys)]
         if not pagos.empty and "REGIÃO" in pagos.columns and "VALOR_PAGO" in pagos.columns:
             pagos["REGIAO_KEY"] = pagos["REGIÃO"].map(normalize_month_key)
-            soma = pagos.groupby("REGIAO_KEY", dropna=False)["VALOR_PAGO"].sum()
+            soma = pagos.groupby("REGIAO_KEY", dropna=False, observed=True)["VALOR_PAGO"].sum()
             df["valor_pago"] = df["REGIAO_KEY"].map(soma).fillna(0.0)
 
     df["pct_meta_regiao"] = safe_div(df["valor_pago"], df["meta_regiao"])
@@ -1215,7 +1215,7 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
     if workplan.empty:
         return workplan
 
-    eventos_contrato = eventos_hist.groupby("CONTRATO_KEY", dropna=True).agg(
+    eventos_contrato = eventos_hist.groupby("CONTRATO_KEY", dropna=True, observed=True).agg(
         acionamentos_hist=("EVENTO_TXT", "size"),
         cpcs_hist=("IS_CPC", "sum"),
         ultimo_acionamento=("DATA", "max"),
@@ -1227,7 +1227,7 @@ def build_workplan_analysis(workplan, eventos_hist, resultados_hist):
         resultados_early["PARCELA_NAO_PAGA_NUM"] = resultados_early["PARCELA_NUM"].where(resultados_early["IS_NAO_PAGOU"])
     else:
         resultados_early["PARCELA_NAO_PAGA_NUM"] = np.nan
-    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True).agg(
+    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True, observed=True).agg(
         acordos_hist=("CONTRATO_KEY", "count"),
         pagamentos_hist=("IS_PAGO", "sum"),
         acordos_em_aberto_hist=("IS_EM_ABERTO", "sum"),
@@ -1454,6 +1454,16 @@ def load_data(data_version):
     resultados["MES"] = resultados["DATA_ACORDO"].dt.to_period("M").astype(str)
     resultados = resultados[resultados["IS_ACORDO"]].copy()
 
+    # category em vez de object/string reduz bastante a memoria em colunas com poucos
+    # valores distintos repetidos em centenas de milhares de linhas (ex: OPERADOR,
+    # EVENTO_TXT). So aplicado depois de todas as transformacoes de texto acima.
+    for col in ["OPERADOR", "EVENTO_TXT", "EVENTO_UPPER", "TIPO DE ACIONAMENTO", "CONTRATO_KEY"]:
+        if col in eventos.columns:
+            eventos[col] = eventos[col].astype("category")
+    for col in ["OPERADOR", "STATUS", "STATUS_KEY", "CAMPANHA", "UF", "REGIÃO", "MES_RESULTADO", "SEGMENTO_DPD", "FAIXA_ATRASO"]:
+        if col in resultados.columns:
+            resultados[col] = resultados[col].astype("category")
+
     return eventos, contratos, resultados
 
 
@@ -1565,7 +1575,7 @@ def ensure_cpc_client_key(eventos, resultados):
 
 
 def aggregate_operator(eventos, resultados):
-    ev = eventos.groupby("OPERADOR", dropna=True).agg(
+    ev = eventos.groupby("OPERADOR", dropna=True, observed=True).agg(
         acionamentos=("EVENTO_TXT", "size"),
         clientes_trabalhados=("CONTRATO_KEY", "nunique"),
         contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
@@ -1573,7 +1583,7 @@ def aggregate_operator(eventos, resultados):
         cpcs=("IS_CPC", "sum"),
         clientes_cpc=("CPC_CLIENT_KEY", lambda s: s[eventos.loc[s.index, "IS_CPC"]].nunique()),
     )
-    rs = resultados.groupby("OPERADOR", dropna=True).agg(
+    rs = resultados.groupby("OPERADOR", dropna=True, observed=True).agg(
         acordos=("CONTRATO_KEY", "count"),
         pagamentos=("IS_PAGO", "sum"),
         acordos_sem_pagamento=("IS_PAGO", lambda s: (~s).sum()),
@@ -1609,14 +1619,14 @@ def aggregate_operator(eventos, resultados):
 
 def aggregate_cpc_operator(eventos, resultados):
     cpc_eventos = eventos[eventos["IS_CPC"]].copy()
-    ev = cpc_eventos.groupby("OPERADOR", dropna=True).agg(
+    ev = cpc_eventos.groupby("OPERADOR", dropna=True, observed=True).agg(
         cpcs=("EVENTO_TXT", "size"),
         clientes_cpc=("CPC_CLIENT_KEY", "nunique"),
         contratos_cpc=("CONTRATO_KEY", "nunique"),
     )
     ev["cpcs_unicos"] = ev["clientes_cpc"]
     cpc_clientes = cpc_eventos[["OPERADOR", "CPC_CLIENT_KEY"]].dropna().drop_duplicates()
-    resultado_cliente = resultados.groupby(["OPERADOR", "CPC_CLIENT_KEY"], dropna=True).agg(
+    resultado_cliente = resultados.groupby(["OPERADOR", "CPC_CLIENT_KEY"], dropna=True, observed=True).agg(
         qtd_acordos=("CONTRATO_KEY", "count"),
         teve_pagamento=("IS_PAGO", "max"),
         teve_em_aberto=("IS_EM_ABERTO", "max"),
@@ -1638,7 +1648,7 @@ def aggregate_cpc_operator(eventos, resultados):
     cpc_resultado["teve_acordo"] = cpc_resultado["qtd_acordos"] > 0
     cpc_resultado["acordo_sem_pagamento"] = cpc_resultado["teve_acordo"] & ~cpc_resultado["teve_pagamento"]
 
-    rs = cpc_resultado.groupby("OPERADOR", dropna=True).agg(
+    rs = cpc_resultado.groupby("OPERADOR", dropna=True, observed=True).agg(
         acordos=("teve_acordo", "sum"),
         pagamentos=("teve_pagamento", "sum"),
         acordos_sem_pagamento=("acordo_sem_pagamento", "sum"),
@@ -1685,11 +1695,11 @@ FAIXA_ATRASO_ORDER = ["000-030", "031-060", "061-090", "091-120", "121-180", "18
 
 
 def aggregate_operator_faixa(eventos, resultados):
-    ev = eventos.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True).agg(
+    ev = eventos.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True, observed=True).agg(
         acionamentos=("EVENTO_TXT", "size"),
         cpcs=("IS_CPC", "sum"),
     ).reset_index()
-    rs = resultados.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True).agg(
+    rs = resultados.groupby(["OPERADOR", "FAIXA_ATRASO"], dropna=True, observed=True).agg(
         acordos=("CONTRATO_KEY", "count"),
         pagamentos=("IS_PAGO", "sum"),
         valor_pago=("VALOR_PAGO", "sum"),
@@ -1709,13 +1719,13 @@ def melhor_faixa_por_operador(faixa_operador_df, min_cpcs=5):
 
     melhor_cpc = (
         elegivel.sort_values(["OPERADOR", "tx_contato"], ascending=[True, False])
-        .groupby("OPERADOR")
+        .groupby("OPERADOR", observed=True)
         .head(1)[["OPERADOR", "FAIXA_ATRASO", "tx_contato", "acionamentos", "cpcs"]]
         .rename(columns={"FAIXA_ATRASO": "Melhor faixa (contato → CPC)", "tx_contato": "_tx_contato", "acionamentos": "_acion_cpc", "cpcs": "_cpcs_cpc"})
     )
     melhor_conversao = (
         elegivel.sort_values(["OPERADOR", "tx_pagamento_cpc"], ascending=[True, False])
-        .groupby("OPERADOR")
+        .groupby("OPERADOR", observed=True)
         .head(1)[["OPERADOR", "FAIXA_ATRASO", "tx_pagamento_cpc", "cpcs", "pagamentos", "valor_pago"]]
         .rename(columns={"FAIXA_ATRASO": "Melhor faixa (CPC → pagamento)", "tx_pagamento_cpc": "_tx_pgto", "cpcs": "_cpcs_pgto", "pagamentos": "_pagtos_pgto", "valor_pago": "_valor_pgto"})
     )
@@ -1746,7 +1756,7 @@ def melhor_faixa_por_operador(faixa_operador_df, min_cpcs=5):
 
 
 def aggregate_resultados(resultados, dimension):
-    df = resultados.groupby(dimension, dropna=False).agg(
+    df = resultados.groupby(dimension, dropna=False, observed=True).agg(
         clientes=("CONTRATO_KEY", "nunique"),
         acordos=("CONTRATO_KEY", "count"),
         pagamentos=("IS_PAGO", "sum"),
@@ -1846,14 +1856,14 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
     profile_aggs = {col: (col, lambda s: normalize_text(s.dropna().iloc[-1]) if not s.dropna().empty else "") for col in base_cols if col != "CONTRATO_KEY"}
     profile_aggs["cpcs_hist_base"] = ("IS_CPC", "sum")
     profile_aggs["ultimo_acionamento_base"] = ("DATA", "max")
-    hist = hist.groupby("CONTRATO_KEY", dropna=True).agg(**profile_aggs).reset_index()
+    hist = hist.groupby("CONTRATO_KEY", dropna=True, observed=True).agg(**profile_aggs).reset_index()
 
     resultados_early = resultados_hist.copy()
     if "PARCELA_NUM" in resultados_early.columns:
         resultados_early["PARCELA_NAO_PAGA_NUM"] = resultados_early["PARCELA_NUM"].where(resultados_early["IS_NAO_PAGOU"])
     else:
         resultados_early["PARCELA_NAO_PAGA_NUM"] = np.nan
-    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True).agg(
+    resultados_contrato = resultados_early.groupby("CONTRATO_KEY", dropna=True, observed=True).agg(
         acordos_hist_base=("CONTRATO_KEY", "count"),
         pagamentos_hist_base=("IS_PAGO", "sum"),
         acordos_nao_pagou_hist_base=("IS_NAO_PAGOU", "sum"),
@@ -1909,7 +1919,7 @@ def build_recovery_profile_rates(eventos_hist, resultados_hist):
             continue
         frame = hist.copy()
         frame["_profile_key"] = profile_key(frame, cols)
-        grouped = frame.groupby("_profile_key", dropna=False).agg(
+        grouped = frame.groupby("_profile_key", dropna=False, observed=True).agg(
             contratos_hist=("CONTRATO_KEY", "nunique"),
             acordos_hist_perfil=("acordos_hist_base", lambda s: (s > 0).sum()),
             pagamentos_hist_perfil=("pagamentos_hist_base", lambda s: (s > 0).sum()),
@@ -2028,7 +2038,7 @@ def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, wor
     if carteira.empty:
         return pd.DataFrame()
     carteira_df = (
-        carteira.groupby("grupo", dropna=False)
+        carteira.groupby("grupo", dropna=False, observed=True)
         .agg(
             contratos_elegiveis=("CONTRATO_KEY", "nunique"),
             carteira_elegivel=("total_amount_due", "sum"),
@@ -2042,7 +2052,7 @@ def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, wor
         eventos_base = eventos_base[valid_group_mask(eventos_base, eventos_col)].copy()
         eventos_base["grupo"] = group_label(eventos_base, eventos_col)
         eventos_df = (
-            eventos_base.groupby("grupo", dropna=False)
+            eventos_base.groupby("grupo", dropna=False, observed=True)
             .agg(
                 acionamentos_hist=("EVENTO_TXT", "size"),
                 contatos_cliente_hist=("IS_CONTATO_CLIENTE", "sum"),
@@ -2058,7 +2068,7 @@ def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, wor
         resultados_base = resultados_hist[valid_group_mask(resultados_hist, resultados_col)].copy()
         resultados_base["grupo"] = group_label(resultados_base, resultados_col)
         resultados_df = (
-            resultados_base.groupby("grupo", dropna=False)
+            resultados_base.groupby("grupo", dropna=False, observed=True)
             .agg(
                 acordos_hist=("CONTRATO_KEY", "count"),
                 pagamentos_hist=("IS_PAGO", "sum"),
@@ -2558,8 +2568,8 @@ def payment_profile_analysis(resultados):
         if col not in resultados.columns:
             continue
         grouped = (
-            resultados.assign(perfil=resultados[col].replace("", np.nan).fillna("Sem informacao"))
-            .groupby("perfil", dropna=False)
+            resultados.assign(perfil=resultados[col].astype(object).replace("", np.nan).fillna("Sem informacao"))
+            .groupby("perfil", dropna=False, observed=True)
             .agg(
                 clientes=("CONTRATO_KEY", "nunique"),
                 acordos=("CONTRATO_KEY", "count"),
@@ -2631,7 +2641,7 @@ def workplan_analytics_section(workplan_view):
         metric_card("Chance media", pct_fmt(workplan_view["probabilidade_recuperacao"].mean()))
 
     prioridade_resumo = (
-        workplan_view.groupby("prioridade_workplan", dropna=False)
+        workplan_view.groupby("prioridade_workplan", dropna=False, observed=True)
         .agg(
             clientes=("CONTRATO_KEY", "nunique"),
             valor_potencial=("valor_potencial", "sum"),
@@ -2662,7 +2672,7 @@ def workplan_analytics_section(workplan_view):
     )
 
     motivo_df = (
-        workplan_view.groupby("motivo_abordagem", dropna=False)
+        workplan_view.groupby("motivo_abordagem", dropna=False, observed=True)
         .agg(
             clientes=("CONTRATO_KEY", "nunique"),
             valor_potencial=("valor_potencial", "sum"),
@@ -2700,7 +2710,7 @@ def workplan_analytics_section(workplan_view):
 
     if "inadimplencia_precoce_tipo" in workplan_view.columns:
         fpd_epd_df = (
-            workplan_view.groupby("inadimplencia_precoce_tipo", dropna=False)
+            workplan_view.groupby("inadimplencia_precoce_tipo", dropna=False, observed=True)
             .agg(
                 clientes=("CONTRATO_KEY", "nunique"),
                 valor_potencial=("valor_potencial", "sum"),
@@ -2816,7 +2826,7 @@ def workplan_analytics_section(workplan_view):
     c1, c2 = st.columns(2)
     with c1:
         matriz_df = (
-            workplan_view.groupby(["SEGMENTO_DPD", "FAIXA_ATRASO"], dropna=False)
+            workplan_view.groupby(["SEGMENTO_DPD", "FAIXA_ATRASO"], dropna=False, observed=True)
             .agg(
                 clientes=("CONTRATO_KEY", "nunique"),
                 valor_esperado_recuperacao=("valor_esperado_recuperacao", "sum"),
@@ -2845,7 +2855,7 @@ def workplan_analytics_section(workplan_view):
         stretch_altair_chart(matriz_chart)
     with c2:
         regiao_df = (
-            workplan_view.groupby(region_col, dropna=False)
+            workplan_view.groupby(region_col, dropna=False, observed=True)
             .agg(
                 clientes=("CONTRATO_KEY", "nunique"),
                 valor_potencial=("valor_potencial", "sum"),
@@ -2879,7 +2889,7 @@ def workplan_analytics_section(workplan_view):
         labels=["0-10%", "10-20%", "20-35%", "35-50%", "50-70%", "70%+"],
     )
     chance_df = (
-        chance_df.groupby("faixa_chance", dropna=False)
+        chance_df.groupby("faixa_chance", dropna=False, observed=True)
         .agg(
             clientes=("CONTRATO_KEY", "nunique"),
             valor_potencial=("valor_potencial", "sum"),
@@ -3385,8 +3395,8 @@ with tabs[0]:
         height=320,
     )
 
-    by_mes_eventos = eventos.groupby("MES").agg(acionamentos=("EVENTO_TXT", "size"), contatos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
-    by_mes_result = resultados.groupby("MES").agg(acordos=("CONTRATO_KEY", "count"), pagamentos=("IS_PAGO", "sum")).reset_index()
+    by_mes_eventos = eventos.groupby("MES", observed=True).agg(acionamentos=("EVENTO_TXT", "size"), contatos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
+    by_mes_result = resultados.groupby("MES", observed=True).agg(acordos=("CONTRATO_KEY", "count"), pagamentos=("IS_PAGO", "sum")).reset_index()
     by_mes = by_mes_eventos.merge(by_mes_result, on="MES", how="outer").fillna(0)
     trend = by_mes.melt("MES", value_vars=["acionamentos", "contatos", "acordos", "pagamentos"], var_name="Indicador", value_name="Volume")
     line_chart(trend, "MES:N", "Volume:Q", "Indicador:N", "Evolução mensal")
@@ -3489,7 +3499,7 @@ with tabs[1]:
         else:
             pequenos_multiplos["OPERADOR_LABEL"] = pequenos_multiplos["OPERADOR"].map(format_operator_label)
             melhor_idx = (
-                pequenos_multiplos.sort_values("tx_pagamento_cpc", ascending=False).groupby("OPERADOR").head(1).index
+                pequenos_multiplos.sort_values("tx_pagamento_cpc", ascending=False).groupby("OPERADOR", observed=True).head(1).index
             )
             pequenos_multiplos["destaque"] = "Demais faixas"
             pequenos_multiplos.loc[melhor_idx, "destaque"] = "Melhor faixa"
@@ -3553,7 +3563,7 @@ with tabs[2]:
     )
     resultado_cliente_geral = (
         resultados.dropna(subset=["CPC_CLIENT_KEY"])
-        .groupby("CPC_CLIENT_KEY", dropna=True)
+        .groupby("CPC_CLIENT_KEY", dropna=True, observed=True)
         .agg(
             qtd_acordos=("CONTRATO_KEY", "count"),
             teve_pagamento=("IS_PAGO", "max"),
@@ -3880,7 +3890,7 @@ with tabs[3]:
     st.caption("Contratos da campanha Pós Retomado são excluídos desta análise por faixa de atraso.")
 
     faixa_df = aggregate_resultados(resultados_faixa, "FAIXA_ATRASO")
-    ev_faixa = eventos_faixa.groupby("FAIXA_ATRASO").agg(acionamentos=("EVENTO_TXT", "size"), contatos_efetivos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
+    ev_faixa = eventos_faixa.groupby("FAIXA_ATRASO", observed=True).agg(acionamentos=("EVENTO_TXT", "size"), contatos_efetivos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
     faixa_df = faixa_df.merge(ev_faixa, on="FAIXA_ATRASO", how="outer").fillna(0)
     faixa_df["tx_contato"] = safe_div(faixa_df["contatos_efetivos"], faixa_df["acionamentos"])
     faixa_chart = display_fields(faixa_df)
@@ -3950,7 +3960,7 @@ with tabs[3]:
         )
 
     best_faixa = (
-        resultados_faixa.groupby(["FAIXA_ATRASO", "OPERADOR"])
+        resultados_faixa.groupby(["FAIXA_ATRASO", "OPERADOR"], observed=True)
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -3967,7 +3977,7 @@ with tabs[3]:
     best_faixa["valor_quebra"] = best_faixa["valor_nao_pagou"]
     best_faixa["meta_individual"] = operator_goal_series(best_faixa["OPERADOR"], selected_months_count(resultados_faixa))
     best_faixa["pct_quebra"] = safe_div(best_faixa["valor_quebra"], best_faixa["meta_individual"])
-    best_faixa = best_faixa.sort_values(["FAIXA_ATRASO", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("FAIXA_ATRASO").head(1)
+    best_faixa = best_faixa.sort_values(["FAIXA_ATRASO", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("FAIXA_ATRASO", observed=True).head(1)
     st.subheader("Melhor operador por faixa")
     data_table(best_faixa)
 
@@ -3975,7 +3985,7 @@ with tabs[4]:
     resultados_segmento = resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")].copy()
     eventos_segmento = eventos[eventos["SEGMENTO_DPD"].ne("Sem DPD")].copy()
     segmento_df = aggregate_resultados(resultados_segmento, "SEGMENTO_DPD")
-    ev_segmento = eventos_segmento.groupby("SEGMENTO_DPD").agg(
+    ev_segmento = eventos_segmento.groupby("SEGMENTO_DPD", observed=True).agg(
         acionamentos=("EVENTO_TXT", "size"),
         contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
     ).reset_index()
@@ -4049,7 +4059,7 @@ with tabs[4]:
         )
 
     best_segmento = (
-        resultados_segmento.groupby(["SEGMENTO_DPD", "OPERADOR"])
+        resultados_segmento.groupby(["SEGMENTO_DPD", "OPERADOR"], observed=True)
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -4068,7 +4078,7 @@ with tabs[4]:
     best_segmento["meta_individual"] = operator_goal_series(best_segmento["OPERADOR"], selected_months_count(resultados_segmento))
     best_segmento["pct_quebra"] = safe_div(best_segmento["valor_quebra"], best_segmento["meta_individual"])
     best_segmento["recuperacao"] = safe_div(best_segmento["valor_pago"], best_segmento["valor_negociado"])
-    best_segmento = best_segmento.sort_values(["SEGMENTO_DPD", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("SEGMENTO_DPD").head(3)
+    best_segmento = best_segmento.sort_values(["SEGMENTO_DPD", "valor_pago", "tx_pagamento"], ascending=[True, False, False]).groupby("SEGMENTO_DPD", observed=True).head(3)
     st.subheader("Top operadores por segmento DPD")
     data_table(best_segmento)
 
@@ -4138,7 +4148,7 @@ with tabs[5]:
         )
 
     best_regiao = (
-        resultados.groupby(["REGIÃO", "OPERADOR"])
+        resultados.groupby(["REGIÃO", "OPERADOR"], observed=True)
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -4156,13 +4166,13 @@ with tabs[5]:
     best_regiao["meta_individual"] = operator_goal_series(best_regiao["OPERADOR"], selected_months_count(resultados))
     best_regiao["pct_quebra"] = safe_div(best_regiao["valor_quebra"], best_regiao["meta_individual"])
     best_regiao["recuperacao"] = safe_div(best_regiao["valor_pago"], best_regiao["valor_negociado"])
-    best_regiao = best_regiao.sort_values(["REGIÃO", "valor_pago", "recuperacao"], ascending=[True, False, False]).groupby("REGIÃO").head(3)
+    best_regiao = best_regiao.sort_values(["REGIÃO", "valor_pago", "recuperacao"], ascending=[True, False, False]).groupby("REGIÃO", observed=True).head(3)
     st.subheader("Top operadores por região")
     data_table(best_regiao)
 
 with tabs[6]:
     matrix = (
-        resultados.groupby(["OPERADOR", "FAIXA_ATRASO", "REGIÃO"])
+        resultados.groupby(["OPERADOR", "FAIXA_ATRASO", "REGIÃO"], observed=True)
         .agg(
             acordos=("CONTRATO_KEY", "count"),
             pagamentos=("IS_PAGO", "sum"),
@@ -4207,7 +4217,7 @@ with tabs[6]:
         ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "tx_pagamento", "efetividade_pagamento", "pct_quebra", "recuperacao", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"],
         index=0,
     )
-    heat_data = matrix.groupby(["OPERADOR", "FAIXA_ATRASO"]).agg(
+    heat_data = matrix.groupby(["OPERADOR", "FAIXA_ATRASO"], observed=True).agg(
         {metric_choice: "sum" if metric_choice in ["valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou"] else "mean"}
     ).reset_index()
     heatmap(display_fields(heat_data), "FAIXA_ATRASO:N", "OPERADOR:N", f"{metric_choice}:Q", "Operador x faixa de atraso")
@@ -4421,7 +4431,7 @@ with tabs[8]:
         c1, c2 = st.columns(2)
         with c1:
             prioridade_df = (
-                workplan_view.groupby("prioridade_workplan")
+                workplan_view.groupby("prioridade_workplan", observed=True)
                 .agg(
                     contratos=("CONTRATO_KEY", "nunique"),
                     total_amount_due=("total_amount_due", "sum"),
@@ -4450,7 +4460,7 @@ with tabs[8]:
             )
         with c2:
             segmento_workplan = (
-                workplan_view.groupby("SEGMENTO_DPD")
+                workplan_view.groupby("SEGMENTO_DPD", observed=True)
                 .agg(
                     clientes=("CONTRATO_KEY", "nunique"),
                     total_amount_due=("total_amount_due", "sum"),
@@ -4758,7 +4768,7 @@ with tabs[9]:
                     )
 
             dimensao_resumo = (
-                profile_view.groupby("dimensao", dropna=False)
+                profile_view.groupby("dimensao", dropna=False, observed=True)
                 .agg(
                     perfis=("perfil", "count"),
                     acordos=("acordos", "sum"),
