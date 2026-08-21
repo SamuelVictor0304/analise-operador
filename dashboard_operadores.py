@@ -376,6 +376,15 @@ def scalar_safe_div(num, den):
     return 0 if pd.isna(den) or den == 0 else num / den
 
 
+def fillna_numeric(df, value=0):
+    # fillna(value) no dataframe inteiro falha se alguma coluna (ex: chave de merge
+    # categorica) nao aceitar esse valor como categoria. Restringe a troca as colunas
+    # numericas, que sao as unicas que ficam com NaN apos merge/join tipo outer.
+    numeric_cols = df.select_dtypes(include="number").columns
+    df[numeric_cols] = df[numeric_cols].fillna(value)
+    return df
+
+
 def normalized_upper(value):
     return normalize_text(value).upper()
 
@@ -1457,7 +1466,7 @@ def load_data(data_version):
     # category em vez de object/string reduz bastante a memoria em colunas com poucos
     # valores distintos repetidos em centenas de milhares de linhas (ex: OPERADOR,
     # EVENTO_TXT). So aplicado depois de todas as transformacoes de texto acima.
-    for col in ["OPERADOR", "EVENTO_TXT", "EVENTO_UPPER", "TIPO DE ACIONAMENTO", "CONTRATO_KEY"]:
+    for col in ["OPERADOR", "EVENTO_TXT", "EVENTO_UPPER", "TIPO DE ACIONAMENTO", "CONTRATO_KEY", "PRODUTO", "ESTAGIO", "FAIXA_ATRASO", "SEGMENTO_DPD"]:
         if col in eventos.columns:
             eventos[col] = eventos[col].astype("category")
     for col in ["OPERADOR", "STATUS", "STATUS_KEY", "CAMPANHA", "UF", "REGIÃO", "MES_RESULTADO", "SEGMENTO_DPD", "FAIXA_ATRASO"]:
@@ -1704,7 +1713,7 @@ def aggregate_operator_faixa(eventos, resultados):
         pagamentos=("IS_PAGO", "sum"),
         valor_pago=("VALOR_PAGO", "sum"),
     ).reset_index()
-    df = ev.merge(rs, on=["OPERADOR", "FAIXA_ATRASO"], how="outer").fillna(0)
+    df = fillna_numeric(ev.merge(rs, on=["OPERADOR", "FAIXA_ATRASO"], how="outer"))
     df = df[df["FAIXA_ATRASO"].isin(FAIXA_ATRASO_ORDER)]
     df["tx_contato"] = safe_div(df["cpcs"], df["acionamentos"])
     df["tx_acordo"] = safe_div(df["acordos"], df["cpcs"])
@@ -3891,7 +3900,7 @@ with tabs[3]:
 
     faixa_df = aggregate_resultados(resultados_faixa, "FAIXA_ATRASO")
     ev_faixa = eventos_faixa.groupby("FAIXA_ATRASO", observed=True).agg(acionamentos=("EVENTO_TXT", "size"), contatos_efetivos=("IS_CONTATO_EFETIVO", "sum")).reset_index()
-    faixa_df = faixa_df.merge(ev_faixa, on="FAIXA_ATRASO", how="outer").fillna(0)
+    faixa_df = fillna_numeric(faixa_df.merge(ev_faixa, on="FAIXA_ATRASO", how="outer"))
     faixa_df["tx_contato"] = safe_div(faixa_df["contatos_efetivos"], faixa_df["acionamentos"])
     faixa_chart = display_fields(faixa_df)
 
@@ -3989,7 +3998,7 @@ with tabs[4]:
         acionamentos=("EVENTO_TXT", "size"),
         contatos_efetivos=("IS_CONTATO_EFETIVO", "sum"),
     ).reset_index()
-    segmento_df = segmento_df.merge(ev_segmento, on="SEGMENTO_DPD", how="outer").fillna(0)
+    segmento_df = fillna_numeric(segmento_df.merge(ev_segmento, on="SEGMENTO_DPD", how="outer"))
     segmento_df["tx_contato"] = safe_div(segmento_df["contatos_efetivos"], segmento_df["acionamentos"])
     segmento_order = ["POTLOSS", "SALVAGE", "SALVAGE +"]
     segmento_df["SEGMENTO_DPD"] = pd.Categorical(segmento_df["SEGMENTO_DPD"], categories=segmento_order, ordered=True)
