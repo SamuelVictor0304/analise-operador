@@ -3598,8 +3598,8 @@ if selected_view == "Visão Geral":
             "Meta atingida",
             pct_fmt(current_goal_pct),
             f"Meta do período: {money_fmt(meta_geral_atual)}",
-            current_goal_pct - previous_goal_pct if previous_goal_pct is not None else None,
-            "p.p. vs. mês anterior" if previous_goal_pct is not None else None,
+            relative_delta(current_goal_pct, previous_goal_pct),
+            "vs. mês anterior" if previous_goal_pct is not None else None,
         )
     with kpi_row1[2]:
         metric_card(
@@ -3615,8 +3615,8 @@ if selected_view == "Visão Geral":
             "Efetividade vencida",
             pct_fmt(efetividade_pagamento_geral),
             f"{num_fmt(total_pagamentos)} pagos de {num_fmt(base_quebras)} desfechos.",
-            efetividade_pagamento_geral - previous_effectiveness if previous_effectiveness is not None else None,
-            "p.p. vs. mês anterior" if previous_effectiveness is not None else None,
+            relative_delta(efetividade_pagamento_geral, previous_effectiveness),
+            "vs. mês anterior" if previous_effectiveness is not None else None,
         )
     with kpi_row2[1]:
         metric_card(
