@@ -1,0 +1,30 @@
+{
+  "regular_operator_goal": 190000,
+  "special_operator_goals": {
+    "victor.lima": 800000
+  },
+  "regular_meta_operators": [
+    "ana.karolina.oliveira",
+    "fabricio.felipe",
+    "felipe.alves.rocha",
+    "giovanna.miranda",
+    "helen.maria",
+    "marilene.feitosa",
+    "erick.rafael",
+    "mauricio.oliveira",
+    "max.silva1"
+  ],
+  "preferred_result_month": "",
+  "minimum_score_base": {
+    "clientes": 10,
+    "cpcs": 5,
+    "acordos": 3
+  },
+  "operational_business_day_totals": {
+    "2026-07": 23,
+    "2026-08": 21
+  },
+  "operational_holidays": [
+    "2026-06-04"
+  ]
+}

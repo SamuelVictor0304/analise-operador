@@ -1,6 +1,7 @@
 from pathlib import Path
 from html import escape
 from io import BytesIO
+import json
 import math
 import os
 import re
@@ -13,34 +14,63 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).parent
+CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 EVENTOS_FILE = BASE_DIR / "Cobmais-Eventos-908-2026050417.xlsx"
 RESULTADOS_FILE = BASE_DIR / "NOVA BASE RESULTADOS 2026.xlsm"
 COLABORADORES_FILE = BASE_DIR / "Base de colaboradores.xlsx"
 EXCLUDED_OPERATORS = {"samuel.levi"}
 EXCLUDED_OPERATOR_PREFIXES = ()
-POST_REPOSSESSED_GOAL = 800000
-SPECIAL_OPERATOR_GOALS = {"victor.lima": POST_REPOSSESSED_GOAL}
-REGULAR_OPERATOR_GOAL = 190000
-REGULAR_META_OPERATORS = {
-    "ana.karolina.oliveira",
-    "fabricio.felipe",
-    "felipe.alves.rocha",
-    "giovanna.miranda",
-    "helen.maria",
-    "marilene.feitosa",
-    "erick.rafael",
-    "mauricio.oliveira",
-    "max.silva1",
+
+
+def load_dashboard_config():
+    defaults = {
+        "regular_operator_goal": 190000,
+        "special_operator_goals": {"victor.lima": 800000},
+        "regular_meta_operators": [
+            "ana.karolina.oliveira",
+            "fabricio.felipe",
+            "felipe.alves.rocha",
+            "giovanna.miranda",
+            "helen.maria",
+            "marilene.feitosa",
+            "erick.rafael",
+            "mauricio.oliveira",
+            "max.silva1",
+        ],
+        "preferred_result_month": "",
+        "minimum_score_base": {"clientes": 10, "cpcs": 5, "acordos": 3},
+        "operational_business_day_totals": {"2026-07": 23, "2026-08": 21},
+        "operational_holidays": ["2026-06-04"],
+    }
+    if not CONFIG_FILE.exists():
+        return defaults
+    try:
+        loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return {**defaults, **loaded}
+    except (OSError, ValueError, TypeError):
+        return defaults
+
+
+DASHBOARD_CONFIG = load_dashboard_config()
+SPECIAL_OPERATOR_GOALS = {
+    str(operator): float(goal)
+    for operator, goal in DASHBOARD_CONFIG["special_operator_goals"].items()
 }
-# Meta so existe pra esses 10: quem nao esta aqui nao esta mais negociando/no escritorio.
+REGULAR_OPERATOR_GOAL = float(DASHBOARD_CONFIG["regular_operator_goal"])
+REGULAR_META_OPERATORS = set(DASHBOARD_CONFIG["regular_meta_operators"])
+# Meta so existe para estes operadores; a lista fica no dashboard_config.json.
 ACTIVE_META_OPERATORS = set(SPECIAL_OPERATOR_GOALS) | REGULAR_META_OPERATORS
-DEFAULT_RESULT_MONTH = "AGOSTO"
+DEFAULT_RESULT_MONTH = str(DASHBOARD_CONFIG.get("preferred_result_month", "")).strip().upper()
 GOAL_FALLBACK_SOURCE_MONTH = "JULHO"
 GOAL_FALLBACK_TARGET_MONTH = "AGOSTO"
 MIN_PERFIL_CONTRATOS = 20
+MINIMUM_SCORE_BASE = DASHBOARD_CONFIG["minimum_score_base"]
 OPERATIONAL_BUSINESS_DAY_TOTALS = {
-    (2026, 7): 23,
-    (2026, 8): 21,
+    tuple(map(int, key.split("-"))): int(value)
+    for key, value in DASHBOARD_CONFIG["operational_business_day_totals"].items()
+}
+OPERATIONAL_HOLIDAYS = {
+    pd.Timestamp(value) for value in DASHBOARD_CONFIG.get("operational_holidays", [])
 }
 POSTGRES_DEFAULTS = {
     "host": "",
@@ -110,20 +140,22 @@ st.markdown(
     }
     .metric-card {
         min-height: 96px;
-        border: 1px solid rgba(148, 163, 184, 0.24);
-        border-radius: 8px;
-        padding: 12px 14px;
-        background: rgba(15, 23, 42, 0.18);
+        border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
+        border-left: 4px solid #2f6f73;
+        border-radius: 12px;
+        padding: 12px 14px 10px;
+        background: var(--secondary-background-color);
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.08);
     }
     .metric-card__label {
         margin-bottom: 8px;
-        color: rgba(255, 255, 255, 0.82);
+        color: color-mix(in srgb, var(--text-color) 72%, transparent);
         font-size: 0.82rem;
         font-weight: 700;
         line-height: 1.2;
     }
     .metric-card__value {
-        color: #ffffff;
+        color: var(--text-color);
         font-size: 1.48rem;
         font-weight: 650;
         line-height: 1.18;
@@ -134,6 +166,27 @@ st.markdown(
     .metric-card--compact .metric-card__value {
         font-size: 1.28rem;
     }
+    .metric-card__delta {
+        margin-top: 7px;
+        font-size: 0.76rem;
+        font-weight: 650;
+    }
+    .metric-card__delta--positive { color: #2e9d66; }
+    .metric-card__delta--negative { color: #d45757; }
+    .metric-card__delta--neutral { color: color-mix(in srgb, var(--text-color) 62%, transparent); }
+    .filter-context {
+        margin: 0.15rem 0 1rem;
+        padding: 0.7rem 0.9rem;
+        border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--text-color) 14%, transparent);
+        background: color-mix(in srgb, var(--secondary-background-color) 86%, transparent);
+        color: color-mix(in srgb, var(--text-color) 80%, transparent);
+        font-size: 0.86rem;
+    }
+    @media (max-width: 900px) {
+        .metric-card { min-height: 86px; }
+        .metric-card__value { font-size: 1.25rem; }
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -141,6 +194,14 @@ st.markdown(
 
 
 CORP_PALETTE = ["#213547", "#2f6f73", "#b7791f", "#6b7280", "#8a3ffc", "#bf616a"]
+CPC_EVENT_CODES = ("02", "03", "04", "05", "40", "41")
+CPC_EVENT_PATTERN = r"^\s*(?:02|03|04|05|40|41)\b"
+CPC_AGREEMENT_PATTERN = r"\bACORDO\b"
+CPC_NEGATIVE_AGREEMENT_PATTERN = r"\b(?:QUEBRA|ESTORNO)\b"
+CPC_RULE_DESCRIPTION = (
+    "Eventos 02, 03, 04, 05, 40 e 41 ou eventos positivos de acordo; "
+    "exclui quebra e estorno de acordo."
+)
 MONTH_NAMES_PT = {
     1: "JANEIRO",
     2: "FEVEREIRO",
@@ -198,10 +259,10 @@ FIELD_HELP = {
     "clientes": ("Clientes", "Quantidade distinta de contratos/clientes no agrupamento."),
     "clientes_trabalhados": ("Clientes trabalhados", "Quantidade distinta de contratos acionados pelo operador."),
     "acionamentos": ("Acionamentos", "Total de eventos válidos, sem AUTO/importação por padrão."),
-    "contatos_efetivos": ("Contatos efetivos", "Mesmo critério de CPC: eventos iniciados por 02, 03, 04 ou 05."),
+    "contatos_efetivos": ("Contatos efetivos", f"Mesmo critério de CPC: {CPC_RULE_DESCRIPTION}"),
     "contatos_cliente": ("Contatos cliente", "Eventos iniciados por 02 ou 03, contato direto com cliente."),
-    "cpcs": ("CPCs", "Eventos produtivos iniciados por 02, 03, 04 ou 05."),
-    "cpcs_unicos": ("CPCs únicos", "Clientes distintos por CPF/CNPJ com pelo menos um CPC por operador. Remove acionamentos repetidos do mesmo cliente."),
+    "cpcs": ("CPCs", CPC_RULE_DESCRIPTION),
+    "cpcs_unicos": ("CPCs únicos", f"Clientes distintos por CPF/CNPJ conforme a regra: {CPC_RULE_DESCRIPTION} Remove eventos repetidos do mesmo cliente."),
     "clientes_cpc": ("Clientes com CPC", "Clientes distintos por CPF/CNPJ que tiveram ao menos um CPC."),
     "contratos_cpc": ("Contratos com CPC", "Contratos distintos que tiveram ao menos um CPC."),
     "acordos": ("Acordos", "Quantidade de acordos localizados na base de resultados."),
@@ -231,7 +292,11 @@ FIELD_HELP = {
     "ticket_medio": ("Ticket médio", "Valor negociado médio dos acordos."),
     "recuperacao": ("% recuperação", "Valor recebido dividido pelo valor negociado."),
     "score": ("Score", "Índice composto que pondera contato, acordo, pagamento, valor recebido e volume."),
-    "meta_individual": ("Meta individual", "Meta mensal do negociador: R$ 200 mil; Victor Lima usa R$ 900 mil de pós retomado."),
+    "confianca_score": ("Confiança do score", "O ranking exige a base mínima configurada de clientes, CPCs e acordos."),
+    "score_base_suficiente": ("Base suficiente", "Indica se o operador atingiu a amostra mínima para entrar no ranking."),
+    "acao_recomendada": ("Ação recomendada", "Etapa do funil com maior gap contra a mediana da equipe."),
+    "melhor_faixa": ("Faixa sugerida", "Faixa com melhor conversão CPC → pagamento e pelo menos 5 CPCs."),
+    "meta_individual": ("Meta individual", "Meta mensal do negociador conforme dashboard_config.json."),
     "atingimento_meta_individual": ("% meta individual", "Valor recebido dividido pela meta individual do negociador."),
     "pct_aberto_meta_individual": ("% aberto/meta individual", "Valor em aberto dividido pela meta individual do negociador."),
     "saldo_meta_individual": ("Saldo meta individual", "Valor recebido menos meta individual. Negativo indica falta para bater meta."),
@@ -359,7 +424,9 @@ def money_fmt(value):
 
 
 def pct_fmt(value):
-    value = 0 if pd.isna(value) or np.isinf(value) else float(value)
+    if pd.isna(value) or np.isinf(value):
+        return "—"
+    value = float(value)
     return f"{value:.1%}".replace(".", ",")
 
 
@@ -1418,7 +1485,14 @@ def load_data(data_version):
     eventos["IS_AUTO"] = eventos["OPERADOR"].eq("auto")
     eventos["IS_IMPORTACAO"] = eventos["EVENTO_UPPER"].str.contains("IMPORTACAO|IMPORTAÇÃO", na=False)
     eventos["IS_ACIONAMENTO"] = ~(eventos["IS_AUTO"] | eventos["IS_IMPORTACAO"])
-    eventos["IS_CPC"] = eventos["EVENTO_UPPER"].str.match(r"^\s*(02|03|04|05)\b", na=False)
+    eventos["IS_EVENTO_ACORDO"] = (
+        eventos["EVENTO_UPPER"].str.contains(CPC_AGREEMENT_PATTERN, regex=True, na=False)
+        & ~eventos["EVENTO_UPPER"].str.contains(CPC_NEGATIVE_AGREEMENT_PATTERN, regex=True, na=False)
+    )
+    eventos["IS_CPC"] = (
+        eventos["EVENTO_UPPER"].str.match(CPC_EVENT_PATTERN, na=False)
+        | eventos["IS_EVENTO_ACORDO"]
+    )
     eventos["IS_CONTATO_EFETIVO"] = eventos["IS_CPC"]
     eventos["IS_CONTATO_CLIENTE"] = eventos["EVENTO_UPPER"].str.match(r"^\s*(02|03)\b", na=False)
     eventos["MES"] = eventos["DATA"].dt.to_period("M").astype(str)
@@ -1430,11 +1504,14 @@ def load_data(data_version):
     resultados["DATA_PAGAMENTO"] = pd.to_datetime(resultados["DATA DO PAGAMENTO"], errors="coerce")
     resultados["DATA_VENCIMENTO"] = pd.to_datetime(resultados["DATA DE VENCIMENTO"], errors="coerce")
     resultados["VALOR_NEGOCIADO"] = pd.to_numeric(resultados["VALOR DO BANCO - META"], errors="coerce").fillna(0)
-    resultados = resultados.merge(
-        contratos_lookup[["CONTRATO_KEY", "CPF_CNPJ_KEY"]],
-        on="CONTRATO_KEY",
-        how="left",
+    resultado_lookup_cols = [
+        col for col in ["CONTRATO_KEY", "CPF_CNPJ_KEY", "PRODUTO", "REGIAO"]
+        if col in contratos_lookup.columns
+    ]
+    resultado_lookup = contratos_lookup[resultado_lookup_cols].rename(
+        columns={"PRODUTO": "PRODUTO_CONTRATO", "REGIAO": "REGIAO_CONTRATO"}
     )
+    resultados = resultados.merge(resultado_lookup, on="CONTRATO_KEY", how="left")
     resultados["CPC_CLIENT_KEY"] = resultados["CPF_CNPJ_KEY"].fillna(resultados["CONTRATO_KEY"])
     resultados["PARCELA_NUM"] = resultados["PARCELA"].map(parse_installment_number)
     honorarios_col = next((col for col in resultados.columns if "HONOR" in normalize_status(col)), None)
@@ -1469,7 +1546,7 @@ def load_data(data_version):
     for col in ["OPERADOR", "EVENTO_TXT", "EVENTO_UPPER", "TIPO DE ACIONAMENTO", "CONTRATO_KEY", "PRODUTO", "ESTAGIO", "FAIXA_ATRASO", "SEGMENTO_DPD"]:
         if col in eventos.columns:
             eventos[col] = eventos[col].astype("category")
-    for col in ["OPERADOR", "STATUS", "STATUS_KEY", "CAMPANHA", "UF", "REGIÃO", "MES_RESULTADO", "SEGMENTO_DPD", "FAIXA_ATRASO"]:
+    for col in ["OPERADOR", "STATUS", "STATUS_KEY", "CAMPANHA", "UF", "REGIÃO", "MES_RESULTADO", "SEGMENTO_DPD", "FAIXA_ATRASO", "PRODUTO_CONTRATO", "REGIAO_CONTRATO"]:
         if col in resultados.columns:
             resultados[col] = resultados[col].astype("category")
 
@@ -1478,6 +1555,24 @@ def load_data(data_version):
 
 def apply_filters(eventos, resultados):
     st.sidebar.title("Filtros")
+
+    filter_keys = [
+        "filter_operator",
+        "filter_result_month",
+        "filter_region",
+        "filter_delay_band",
+        "filter_dpd_segment",
+        "filter_campaign",
+        "filter_product",
+        "filter_include_auto",
+        "filter_sync_periods",
+        "event_start_date",
+        "event_end_date",
+    ]
+    if st.sidebar.button("Limpar filtros", width="stretch", help="Restaura o recorte padrão da análise."):
+        for key in filter_keys:
+            st.session_state.pop(key, None)
+        st.rerun()
 
     operadores = sorted(set(eventos["OPERADOR"].dropna()) | set(resultados["OPERADOR"].dropna()))
     regioes = sorted(resultados["REGIÃO"].replace("", np.nan).dropna().unique())
@@ -1490,65 +1585,89 @@ def apply_filters(eventos, resultados):
     mes_padrao = []
     if not meses_df.empty:
         mes_atual = MONTH_NAMES_PT.get(pd.Timestamp.today().month)
-        if DEFAULT_RESULT_MONTH in meses:
-            mes_padrao = [DEFAULT_RESULT_MONTH]
-        elif mes_atual in meses:
+        if mes_atual in meses:
             mes_padrao = [mes_atual]
+        elif DEFAULT_RESULT_MONTH and DEFAULT_RESULT_MONTH in meses:
+            mes_padrao = [DEFAULT_RESULT_MONTH]
         else:
             meses_validos = meses_df[meses_df["MES_NUM"] <= pd.Timestamp.today().month]
             base_mes = meses_validos if not meses_validos.empty else meses_df
             mes_padrao = [base_mes.sort_values(["MES_NUM", "MES_RESULTADO"]).iloc[-1]["MES_RESULTADO"]]
 
-    operador_sel = st.sidebar.multiselect("Operador", operadores)
-    mes_sel = st.sidebar.multiselect("Mês do resultado", meses, default=mes_padrao)
-    regiao_sel = st.sidebar.multiselect("Região", regioes)
-    faixa_sel = st.sidebar.multiselect("Faixa de atraso", faixas)
-    segmento_dpd_sel = st.sidebar.multiselect("Segmento DPD", segmentos_dpd)
-    campanha_sel = st.sidebar.multiselect("Campanha", campanhas)
-    produto_sel = st.sidebar.multiselect("Produto", produtos)
-    incluir_auto = st.sidebar.toggle("Incluir AUTO/importação nos acionamentos", value=False)
+    operador_sel = st.sidebar.multiselect("Operador", operadores, key="filter_operator")
+    mes_sel = st.sidebar.multiselect("Mês do resultado", meses, default=mes_padrao, key="filter_result_month")
+    sincronizar_periodos = st.sidebar.toggle(
+        "Alinhar acionamentos ao mês do resultado",
+        value=True,
+        key="filter_sync_periods",
+        help="Mantém acionamentos, CPCs e resultados no mesmo mês-calendário.",
+    )
+    regiao_sel = st.sidebar.multiselect("Região", regioes, key="filter_region")
+    faixa_sel = st.sidebar.multiselect("Faixa de atraso", faixas, key="filter_delay_band")
+    segmento_dpd_sel = st.sidebar.multiselect("Segmento DPD", segmentos_dpd, key="filter_dpd_segment")
+    campanha_sel = st.sidebar.multiselect("Campanha", campanhas, key="filter_campaign")
+    produto_sel = st.sidebar.multiselect("Produto", produtos, key="filter_product")
+    incluir_auto = st.sidebar.toggle(
+        "Incluir AUTO/importação nos acionamentos",
+        value=False,
+        key="filter_include_auto",
+    )
+
+    if mes_sel:
+        resultados = resultados[resultados["MES_RESULTADO"].isin(mes_sel)]
 
     min_data = eventos["DATA"].min()
     max_data = eventos["DATA"].max()
     min_event_date = min_data.date()
     max_event_date = max_data.date()
-    st.sidebar.caption(f"Eventos disponiveis: {min_event_date:%d/%m/%Y} a {max_event_date:%d/%m/%Y}")
-    if "event_start_date" not in st.session_state:
-        st.session_state["event_start_date"] = min_event_date
-    if "event_end_date" not in st.session_state:
-        st.session_state["event_end_date"] = max_event_date
-    if st.session_state["event_start_date"] < min_event_date or st.session_state["event_start_date"] > max_event_date:
-        st.session_state["event_start_date"] = min_event_date
-    if st.session_state["event_end_date"] < min_event_date or st.session_state["event_end_date"] > max_event_date:
-        st.session_state["event_end_date"] = max_event_date
+    st.sidebar.caption(f"Eventos disponíveis: {min_event_date:%d/%m/%Y} a {max_event_date:%d/%m/%Y}")
+    data_inicio = min_event_date
+    data_fim = max_event_date
 
-    data_inicio = st.sidebar.date_input(
-        "Inicio dos eventos",
-        min_value=min_event_date,
-        max_value=max_event_date,
-        key="event_start_date",
-        format="DD/MM/YYYY",
-    )
-    data_fim = st.sidebar.date_input(
-        "Fim dos eventos",
-        min_value=min_event_date,
-        max_value=max_event_date,
-        key="event_end_date",
-        format="DD/MM/YYYY",
-    )
-    if data_inicio > data_fim:
-        st.sidebar.warning("A data inicial nao pode ser maior que a final.")
+    result_periods = resultados["DATA_ACORDO"].dropna().dt.to_period("M").unique()
+    if sincronizar_periodos and mes_sel and len(result_periods):
+        eventos = eventos[eventos["DATA"].dt.to_period("M").isin(result_periods)]
+        data_inicio = min(period.start_time.date() for period in result_periods)
+        data_fim = max(period.end_time.date() for period in result_periods)
+        st.sidebar.caption(f"Acionamentos alinhados: {data_inicio:%d/%m/%Y} a {data_fim:%d/%m/%Y}")
     else:
-        inicio, fim = pd.Timestamp(data_inicio), pd.Timestamp(data_fim) + pd.Timedelta(days=1)
-        eventos = eventos[(eventos["DATA"].isna()) | ((eventos["DATA"] >= inicio) & (eventos["DATA"] < fim))]
+        if "event_start_date" not in st.session_state:
+            st.session_state["event_start_date"] = min_event_date
+        if "event_end_date" not in st.session_state:
+            st.session_state["event_end_date"] = max_event_date
+        if not min_event_date <= st.session_state["event_start_date"] <= max_event_date:
+            st.session_state["event_start_date"] = min_event_date
+        if not min_event_date <= st.session_state["event_end_date"] <= max_event_date:
+            st.session_state["event_end_date"] = max_event_date
+
+        data_inicio = st.sidebar.date_input(
+            "Início dos eventos",
+            min_value=min_event_date,
+            max_value=max_event_date,
+            key="event_start_date",
+            format="DD/MM/YYYY",
+        )
+        data_fim = st.sidebar.date_input(
+            "Fim dos eventos",
+            min_value=min_event_date,
+            max_value=max_event_date,
+            key="event_end_date",
+            format="DD/MM/YYYY",
+        )
+        if data_inicio > data_fim:
+            st.sidebar.warning("A data inicial não pode ser maior que a final.")
+        else:
+            inicio, fim = pd.Timestamp(data_inicio), pd.Timestamp(data_fim) + pd.Timedelta(days=1)
+            eventos = eventos[(eventos["DATA"] >= inicio) & (eventos["DATA"] < fim)]
 
     if operador_sel:
         eventos = eventos[eventos["OPERADOR"].isin(operador_sel)]
         resultados = resultados[resultados["OPERADOR"].isin(operador_sel)]
-    if mes_sel:
-        resultados = resultados[resultados["MES_RESULTADO"].isin(mes_sel)]
     if regiao_sel:
         resultados = resultados[resultados["REGIÃO"].isin(regiao_sel)]
+        if "REGIAO" in eventos.columns:
+            regiao_keys = {normalized_upper(value) for value in regiao_sel}
+            eventos = eventos[eventos["REGIAO"].map(normalized_upper).isin(regiao_keys)]
     if faixa_sel:
         eventos = eventos[eventos["FAIXA_ATRASO"].isin(faixa_sel)]
         resultados = resultados[resultados["FAIXA_ATRASO"].isin(faixa_sel)]
@@ -1557,14 +1676,110 @@ def apply_filters(eventos, resultados):
         resultados = resultados[resultados["SEGMENTO_DPD"].isin(segmento_dpd_sel)]
     if campanha_sel:
         resultados = resultados[resultados["CAMPANHA"].isin(campanha_sel)]
-        contratos_campanha = set(resultados["CONTRATO_KEY"].dropna())
-        eventos = eventos[eventos["CONTRATO_KEY"].isin(contratos_campanha)]
     if produto_sel and "PRODUTO" in eventos.columns:
         eventos = eventos[eventos["PRODUTO"].isin(produto_sel)]
+        if "PRODUTO_CONTRATO" in resultados.columns:
+            resultados = resultados[resultados["PRODUTO_CONTRATO"].isin(produto_sel)]
     if not incluir_auto:
         eventos = eventos[eventos["IS_ACIONAMENTO"]]
 
-    return eventos, resultados, operador_sel
+    filter_context = {
+        "operadores": operador_sel,
+        "meses": mes_sel,
+        "regioes": regiao_sel,
+        "faixas": faixa_sel,
+        "segmentos": segmento_dpd_sel,
+        "campanhas": campanha_sel,
+        "produtos": produto_sel,
+        "sincronizado": bool(sincronizar_periodos and mes_sel and len(result_periods)),
+        "event_start": data_inicio,
+        "event_end": data_fim,
+        "campanha_assimetrica": bool(campanha_sel),
+    }
+    return eventos, resultados, operador_sel, filter_context
+
+
+NAVIGATION_GROUPS = {
+    "Executivo": ["Visão Geral", "Insights"],
+    "Operadores": ["Operadores", "CPC"],
+    "Segmentos": ["Faixa de Atraso", "DPD", "Região", "Matriz"],
+    "Metas": ["Metas", "Pagamentos"],
+    "Workplan": ["Workplan"],
+}
+
+
+def navigation_controls():
+    st.sidebar.title("Navegação")
+    area = st.sidebar.radio(
+        "Área",
+        list(NAVIGATION_GROUPS),
+        key="navigation_area",
+        label_visibility="collapsed",
+    )
+    views = NAVIGATION_GROUPS[area]
+    if len(views) == 1:
+        selected_view = views[0]
+        st.sidebar.caption(selected_view)
+    else:
+        selected_view = st.sidebar.radio(
+            "Análise",
+            views,
+            key=f"navigation_view_{area}",
+        )
+    st.sidebar.divider()
+    return selected_view
+
+
+def previous_results_slice(resultados_raw, eventos_raw, context):
+    meses = context.get("meses", [])
+    if len(meses) != 1:
+        return resultados_raw.iloc[0:0].copy()
+    month_lookup = {normalize_month_key(name): month for month, name in MONTH_NAMES_PT.items()}
+    current_month = month_lookup.get(normalize_month_key(meses[0]))
+    if not current_month:
+        return resultados_raw.iloc[0:0].copy()
+    previous_month = 12 if current_month == 1 else current_month - 1
+    previous = resultados_raw[pd.to_numeric(resultados_raw["MES_NUM"], errors="coerce").eq(previous_month)].copy()
+
+    if context.get("operadores"):
+        previous = previous[previous["OPERADOR"].isin(context["operadores"])]
+    if context.get("regioes"):
+        previous = previous[previous["REGIÃO"].isin(context["regioes"])]
+    if context.get("faixas"):
+        previous = previous[previous["FAIXA_ATRASO"].isin(context["faixas"])]
+    if context.get("segmentos"):
+        previous = previous[previous["SEGMENTO_DPD"].isin(context["segmentos"])]
+    if context.get("campanhas"):
+        previous = previous[previous["CAMPANHA"].isin(context["campanhas"])]
+    if context.get("produtos") and "PRODUTO_CONTRATO" in previous.columns:
+        previous = previous[previous["PRODUTO_CONTRATO"].isin(context["produtos"])]
+    return previous
+
+
+def relative_delta(current, previous):
+    if previous is None or pd.isna(previous) or previous == 0:
+        return None
+    return (float(current) - float(previous)) / abs(float(previous))
+
+
+def filter_context_text(context):
+    event_period = f"{context['event_start']:%d/%m/%Y}–{context['event_end']:%d/%m/%Y}"
+    result_period = ", ".join(context.get("meses") or []) or "todos os meses"
+    scope_items = []
+    for label, key in [
+        ("Operador", "operadores"),
+        ("Região", "regioes"),
+        ("Faixa", "faixas"),
+        ("DPD", "segmentos"),
+        ("Campanha", "campanhas"),
+        ("Produto", "produtos"),
+    ]:
+        values = context.get(key) or []
+        if values:
+            scope_items.append(f"{label}: {', '.join(map(str, values))}")
+    dimensions = " | ".join(scope_items) if scope_items else "Sem filtros dimensionais"
+    alignment = "períodos alinhados" if context.get("sincronizado") else "períodos independentes"
+    return f"Acionamentos: {event_period} | Resultados: {result_period} | {alignment} | {dimensions}"
 
 
 def ensure_cpc_client_key(eventos, resultados):
@@ -1616,14 +1831,27 @@ def aggregate_operator(eventos, resultados):
     df["meta_individual"] = operator_goal_series(df["OPERADOR"], selected_months_count(resultados))
     df["pct_quebra"] = safe_div(df["valor_quebra"], df["meta_individual"])
     df["recuperacao"] = safe_div(df["valor_pago"], df["valor_negociado"])
-    df["score"] = (
-        df["tx_contato"].rank(pct=True) * 0.15
-        + df["tx_acordo"].rank(pct=True) * 0.25
-        + df["tx_pagamento"].rank(pct=True) * 0.25
-        + df["valor_pago"].rank(pct=True) * 0.25
-        + df["clientes_trabalhados"].rank(pct=True) * 0.10
+    minimum_clients = int(MINIMUM_SCORE_BASE.get("clientes", 10))
+    minimum_cpcs = int(MINIMUM_SCORE_BASE.get("cpcs", 5))
+    minimum_agreements = int(MINIMUM_SCORE_BASE.get("acordos", 3))
+    df["score_base_suficiente"] = (
+        df["clientes_trabalhados"].ge(minimum_clients)
+        & df["cpcs"].ge(minimum_cpcs)
+        & df["acordos"].ge(minimum_agreements)
     )
-    return df.sort_values(["score", "valor_pago"], ascending=False)
+    df["confianca_score"] = np.where(df["score_base_suficiente"], "Base suficiente", "Sem base suficiente")
+    df["score"] = np.nan
+    qualified = df["score_base_suficiente"]
+    if qualified.any():
+        qualified_df = df.loc[qualified]
+        df.loc[qualified, "score"] = (
+            qualified_df["tx_contato"].rank(pct=True) * 0.15
+            + qualified_df["tx_acordo"].rank(pct=True) * 0.25
+            + qualified_df["tx_pagamento"].rank(pct=True) * 0.25
+            + qualified_df["valor_pago"].rank(pct=True) * 0.25
+            + qualified_df["clientes_trabalhados"].rank(pct=True) * 0.10
+        )
+    return df.sort_values(["score_base_suficiente", "score", "valor_pago"], ascending=False)
 
 
 def aggregate_cpc_operator(eventos, resultados):
@@ -2153,15 +2381,29 @@ def expected_recovery_by_group(workplan_view, eventos_hist, resultados_hist, wor
     return df.sort_values("recuperacao_esperada", ascending=False)
 
 
-def metric_card(label, value, help_text=None):
+def metric_card(label, value, help_text=None, delta=None, delta_label=None, delta_is_good=True):
     value_text = str(value)
     title = help_text or f"{label}: {value_text}"
     compact_class = " metric-card--compact" if len(value_text) >= 14 else ""
+    delta_html = ""
+    if delta is not None and not pd.isna(delta) and not np.isinf(delta):
+        direction_positive = delta >= 0
+        good_change = direction_positive if delta_is_good else not direction_positive
+        delta_class = "positive" if good_change else "negative"
+        arrow = "▲" if direction_positive else "▼"
+        delta_text = pct_fmt(abs(delta))
+        delta_html = (
+            f'<div class="metric-card__delta metric-card__delta--{delta_class}">'
+            f'{arrow} {escape(delta_text)} {escape(delta_label)}</div>'
+        )
+    elif delta_label:
+        delta_html = f'<div class="metric-card__delta metric-card__delta--neutral">{escape(delta_label)}</div>'
     st.markdown(
         f"""
         <div class="metric-card{compact_class}" title="{escape(title)}">
             <div class="metric-card__label">{escape(str(label))}</div>
             <div class="metric-card__value">{escape(value_text)}</div>
+            {delta_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -2206,7 +2448,6 @@ def meta_progress_color(pct):
 def business_day_clock_details(month_labels, today=None):
     today = (today or pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)).normalize()
     month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
-    operational_holidays = {pd.Timestamp("2026-06-04")}
     selected_months = []
     for label in month_labels or []:
         month_num = month_lookup.get(normalize_status(label))
@@ -2222,7 +2463,7 @@ def business_day_clock_details(month_labels, today=None):
         month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
         month_end = month_start + pd.offsets.MonthEnd(0)
         month_business_days = pd.bdate_range(month_start, month_end)
-        month_business_days = month_business_days[~month_business_days.normalize().isin(operational_holidays)]
+        month_business_days = month_business_days[~month_business_days.normalize().isin(OPERATIONAL_HOLIDAYS)]
         month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(month_business_days))
         elapsed_for_month = 0
         total_days += month_total_days
@@ -2659,7 +2900,7 @@ def workplan_analytics_section(workplan_view):
         )
         .reset_index()
     )
-    prioridade_resumo["ordem_prioridade"] = prioridade_resumo["prioridade_workplan"].map({"Alta": 0, "MÃ©dia": 1, "Baixa": 2}).fillna(3)
+    prioridade_resumo["ordem_prioridade"] = prioridade_resumo["prioridade_workplan"].map({"Alta": 0, "Média": 1, "Baixa": 2}).fillna(3)
     prioridade_resumo = prioridade_resumo.sort_values("ordem_prioridade")
     prioridade_display = display_fields(prioridade_resumo)
     prioridade_chart = (
@@ -2667,7 +2908,7 @@ def workplan_analytics_section(workplan_view):
         .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
         .encode(
             x=alt.X("valor_esperado_recuperacao:Q", title="Valor esperado (R$)"),
-            y=alt.Y("prioridade_workplan:N", sort=["Alta", "MÃ©dia", "Baixa"], title=None),
+            y=alt.Y("prioridade_workplan:N", sort=["Alta", "Média", "Baixa"], title=None),
             color=alt.Color("prioridade_workplan:N", title="Prioridade", scale=alt.Scale(range=CORP_PALETTE)),
             tooltip=[
                 alt.Tooltip("prioridade_workplan:N", title="Prioridade"),
@@ -2755,7 +2996,7 @@ def workplan_analytics_section(workplan_view):
     with exp1:
         export_prioridades = st.multiselect(
             "Prioridade para exportar",
-            ["Alta", "MÃƒÂ©dia", "Baixa"],
+            ["Alta", "Média", "Baixa"],
             default=["Alta"],
             key="workplan_export_prioridades",
         )
@@ -3251,7 +3492,7 @@ def dataframe_to_excel_bytes(df, sheet_name="Workplan", extra_sheets=None):
 def glossary():
     with st.expander("Glossário dos indicadores"):
         items = [
-            ("CPC", "Eventos iniciados por 02, 03, 04 ou 05."),
+            ("CPC", CPC_RULE_DESCRIPTION),
             ("Valor negociado", "Soma da coluna VALOR DO BANCO - META."),
             ("Valor recebido", "Valor negociado apenas dos acordos pagos; não pagos entram como R$ 0,00."),
             ("Taxa CPC -> acordo", "Contratos com CPC que geraram acordo / contratos com CPC."),
@@ -3266,17 +3507,49 @@ def glossary():
 
 
 eventos_raw, contratos_raw, resultados_raw = load_data(data_file_versions())
-workplan_raw, workplan_error = load_workplan()
-eventos, resultados, operadores_filtrados = apply_filters(eventos_raw, resultados_raw)
+selected_view = navigation_controls()
+eventos, resultados, operadores_filtrados, filter_context = apply_filters(eventos_raw, resultados_raw)
 eventos, resultados = ensure_cpc_client_key(eventos, resultados)
 eventos_raw, resultados_raw = ensure_cpc_client_key(eventos_raw, resultados_raw)
-operador_df = aggregate_operator(eventos, resultados)
-cpc_df = aggregate_cpc_operator(eventos, resultados)
-faixa_operador_df = aggregate_operator_faixa(eventos, resultados)
-workplan_df = build_workplan_analysis(workplan_raw, eventos_raw[eventos_raw["IS_ACIONAMENTO"]], resultados_raw)
+operador_df = (
+    aggregate_operator(eventos, resultados)
+    if selected_view in {"Visão Geral", "Operadores", "Metas", "Insights"}
+    else pd.DataFrame()
+)
+cpc_df = aggregate_cpc_operator(eventos, resultados) if selected_view == "CPC" else pd.DataFrame()
+faixa_operador_df = (
+    aggregate_operator_faixa(eventos, resultados)
+    if selected_view in {"Operadores", "Faixa de Atraso", "Insights"}
+    else pd.DataFrame()
+)
+if selected_view == "Workplan":
+    workplan_raw, workplan_error = load_workplan()
+    workplan_df = build_workplan_analysis(
+        workplan_raw,
+        eventos_raw[eventos_raw["IS_ACIONAMENTO"]],
+        resultados_raw,
+    )
+else:
+    workplan_raw, workplan_error, workplan_df = pd.DataFrame(), None, pd.DataFrame()
 
 st.title("Performance Operacional por Operador")
 st.caption("Análise executiva de acionamentos, contatos, acordos, pagamentos, recuperação e eficiência por segmento.")
+latest_update = max(
+    latest_file("Cobmais-Eventos-908-*.xlsx").stat().st_mtime,
+    latest_file("Pesquisa-Cliente-908-*.xlsx").stat().st_mtime,
+    RESULTADOS_FILE.stat().st_mtime,
+)
+latest_update_text = pd.Timestamp.fromtimestamp(latest_update).strftime("%d/%m/%Y %H:%M")
+st.markdown(
+    f'<div class="filter-context"><strong>Escopo ativo:</strong> {escape(filter_context_text(filter_context))}'
+    f'<br><span>Dados atualizados em {escape(latest_update_text)}</span></div>',
+    unsafe_allow_html=True,
+)
+if filter_context["campanha_assimetrica"]:
+    st.warning(
+        "Campanha não existe na base de eventos. O filtro foi aplicado aos resultados; "
+        "taxas que cruzam acionamentos/CPCs com acordos devem ser interpretadas com cautela."
+    )
 glossary()
 
 total_clientes = eventos["CONTRATO_KEY"].nunique()
@@ -3295,44 +3568,73 @@ meta_geral_atual = office_goal_for_resultados(resultados)
 tx_pagamento_geral = total_pagamentos / total_acordos if total_acordos else 0
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
 pct_quebra_geral = valor_nao_pagou / meta_geral_atual if meta_geral_atual else 0
+previous_results = previous_results_slice(resultados_raw, eventos_raw, filter_context)
+previous_received = previous_results["VALOR_PAGO"].sum() if not previous_results.empty else None
+previous_open = previous_results["VALOR_EM_ABERTO"].sum() if not previous_results.empty else None
+previous_break = previous_results["VALOR_NAO_PAGOU"].sum() if not previous_results.empty else None
+previous_paid = int(previous_results["IS_PAGO"].sum()) if not previous_results.empty else 0
+previous_not_paid = int(previous_results["IS_NAO_PAGOU"].sum()) if not previous_results.empty else 0
+previous_effectiveness = scalar_safe_div(previous_paid, previous_paid + previous_not_paid) if not previous_results.empty else None
+previous_goal = office_goal_for_resultados(previous_results) if not previous_results.empty else 0
+previous_goal_pct = scalar_safe_div(previous_received, previous_goal) if previous_results is not None and previous_goal else None
+current_goal_pct = scalar_safe_div(valor_pago, meta_geral_atual)
+total_unique_cpcs = eventos.loc[eventos["IS_CPC"], "CPC_CLIENT_KEY"].nunique()
+tx_cpc_pagamento_geral = scalar_safe_div(total_pagamentos, total_unique_cpcs)
 
-kpi_row1 = st.columns(5)
-kpi_row2 = st.columns(6)
-kpi_row3 = st.columns(3)
-with kpi_row1[0]:
-    metric_card("Clientes", num_fmt(total_clientes))
-with kpi_row1[1]:
-    metric_card("Acionamentos", num_fmt(total_acionamentos))
-with kpi_row1[2]:
-    metric_card("Contatos efetivos", num_fmt(total_contatos))
-with kpi_row1[3]:
-    metric_card("Acordos", num_fmt(total_acordos))
-with kpi_row1[4]:
-    metric_card("Pagamentos", num_fmt(total_pagamentos))
-with kpi_row2[0]:
-    metric_card("Em aberto", num_fmt(total_em_aberto))
-with kpi_row2[1]:
-    metric_card("NÃ£o pagou", num_fmt(total_nao_pagou))
-with kpi_row2[2]:
-    metric_card("Negociado", money_fmt(valor_negociado))
-with kpi_row2[5]:
-    metric_card("Taxa pgto", pct_fmt(tx_pagamento_geral))
+if selected_view == "Visão Geral":
+    st.subheader("Resumo executivo")
+    kpi_row1 = st.columns(3)
+    kpi_row2 = st.columns(3)
+    with kpi_row1[0]:
+        metric_card(
+            "Recebido",
+            money_fmt(valor_pago),
+            "Valor efetivamente recebido no recorte atual.",
+            relative_delta(valor_pago, previous_received),
+            "vs. mês anterior" if previous_received is not None else None,
+        )
+    with kpi_row1[1]:
+        metric_card(
+            "Meta atingida",
+            pct_fmt(current_goal_pct),
+            f"Meta do período: {money_fmt(meta_geral_atual)}",
+            current_goal_pct - previous_goal_pct if previous_goal_pct is not None else None,
+            "p.p. vs. mês anterior" if previous_goal_pct is not None else None,
+        )
+    with kpi_row1[2]:
+        metric_card(
+            "Valor em aberto",
+            money_fmt(valor_em_aberto),
+            "Potencial ainda pendente de efetivação.",
+            relative_delta(valor_em_aberto, previous_open),
+            "vs. mês anterior" if previous_open is not None else None,
+            delta_is_good=False,
+        )
+    with kpi_row2[0]:
+        metric_card(
+            "Efetividade vencida",
+            pct_fmt(efetividade_pagamento_geral),
+            f"{num_fmt(total_pagamentos)} pagos de {num_fmt(base_quebras)} desfechos.",
+            efetividade_pagamento_geral - previous_effectiveness if previous_effectiveness is not None else None,
+            "p.p. vs. mês anterior" if previous_effectiveness is not None else None,
+        )
+    with kpi_row2[1]:
+        metric_card(
+            "CPC único → pagamento",
+            "—" if filter_context["campanha_assimetrica"] else pct_fmt(tx_cpc_pagamento_geral),
+            f"{num_fmt(total_pagamentos)} pagamentos para {num_fmt(total_unique_cpcs)} clientes com CPC.",
+        )
+    with kpi_row2[2]:
+        metric_card(
+            "Valor quebrado",
+            money_fmt(valor_nao_pagou),
+            f"{num_fmt(total_nao_pagou)} acordos não pagos.",
+            relative_delta(valor_nao_pagou, previous_break),
+            "vs. mês anterior" if previous_break is not None else None,
+            delta_is_good=False,
+        )
 
-with kpi_row2[3]:
-    metric_card("Recebido", money_fmt(valor_pago))
-with kpi_row2[4]:
-    metric_card("Recuperação", pct_fmt(valor_pago / valor_negociado if valor_negociado else 0))
-
-tabs = st.tabs(["Visão Geral", "Operadores", "CPC", "Faixa de Atraso", "DPD", "Região", "Matriz", "Metas", "Workplan", "Pagamentos", "Insights"])
-
-with kpi_row3[0]:
-    metric_card("% quebras", pct_fmt(pct_quebra_geral))
-with kpi_row3[1]:
-    metric_card("Valor quebras", money_fmt(valor_nao_pagou))
-with kpi_row3[2]:
-    metric_card("Base quebras", f"{num_fmt(total_nao_pagou)} de {num_fmt(base_quebras)}")
-
-with tabs[0]:
+if selected_view == "Visão Geral":
     c1, c2 = st.columns([1.2, 1])
     with c1:
         top = display_fields(operador_df.head(12))
@@ -3410,7 +3712,19 @@ with tabs[0]:
     trend = by_mes.melt("MES", value_vars=["acionamentos", "contatos", "acordos", "pagamentos"], var_name="Indicador", value_name="Volume")
     line_chart(trend, "MES:N", "Volume:Q", "Indicador:N", "Evolução mensal")
 
-with tabs[1]:
+if selected_view == "Operadores":
+    qualified_count = int(operador_df.get("score_base_suficiente", pd.Series(dtype=bool)).sum())
+    st.caption(
+        f"Ranking com {num_fmt(qualified_count)} operadores elegíveis. Base mínima: "
+        f"{MINIMUM_SCORE_BASE.get('clientes', 10)} clientes, {MINIMUM_SCORE_BASE.get('cpcs', 5)} CPCs "
+        f"e {MINIMUM_SCORE_BASE.get('acordos', 3)} acordos."
+    )
+    with st.expander("Como o score é calculado"):
+        st.markdown(
+            "O score compara apenas operadores com base suficiente e pondera: taxa de contato (15%), "
+            "CPC → acordo (25%), acordo → pagamento (25%), valor recebido (25%) e clientes trabalhados (10%). "
+            "Operadores abaixo da amostra mínima aparecem como **Sem base suficiente** e não entram no ranking."
+        )
     c1, c2 = st.columns(2)
     with c1:
         chart_operador = display_fields(operador_df.head(15))
@@ -3481,6 +3795,7 @@ with tabs[1]:
         "ticket_medio",
         "recuperacao",
         "score",
+        "confianca_score",
     ]
     data_table(operador_df[cols])
 
@@ -3560,9 +3875,9 @@ with tabs[1]:
             st.caption("Barra destacada = faixa com melhor conversão CPC → pagamento do operador. Faixas sem barra: menos de 5 CPCs, sem base.")
             stretch_altair_chart(pequenos_multiplos_chart)
 
-with tabs[2]:
+if selected_view == "CPC":
     st.subheader("Conversão CPC para acordos e pagamentos")
-    st.caption("CPC considerado pelos eventos iniciados por 02, 03, 04 e 05. O KPI geral remove duplicidade por CPF/CNPJ.")
+    st.caption(f"{CPC_RULE_DESCRIPTION} O KPI geral remove duplicidade por CPF/CNPJ, usando o contrato apenas quando o documento não existe.")
 
     cpc_eventos_geral = (
         eventos[eventos["IS_CPC"]]
@@ -3595,7 +3910,8 @@ with tabs[2]:
     _tx_acordo_geral = _acordos_geral / _unicos_total if _unicos_total else 0
     _tx_pag_geral = _pagamentos_geral / _unicos_total if _unicos_total else 0
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1, c2, c3, c4 = st.columns(4)
+    c5, c6, c7 = st.columns(3)
     with c1:
         metric_card("CPCs únicos", num_fmt(_unicos_total))
     with c2:
@@ -3753,7 +4069,8 @@ with tabs[2]:
     _vsb = cpc_df[cpc_df["quartil_cpc_volume"].eq("Sem base")]
     _vbase = cpc_df[cpc_df["cpcs_unicos"] >= 1]
 
-    kv1, kv2, kv3, kv4, kv5, kv6 = st.columns(6)
+    kv1, kv2, kv3 = st.columns(3)
+    kv4, kv5, kv6 = st.columns(3)
     with kv1:
         metric_card("Ranqueados", num_fmt(len(cpc_df) - len(_vsb)))
     with kv2:
@@ -3769,7 +4086,11 @@ with tabs[2]:
 
     kv7, kv8, kv9, kv10 = st.columns(4)
     with kv7:
-        metric_card("CPCs únicos (total)", num_fmt(cpc_df["cpcs_unicos"].sum()))
+        metric_card(
+            "Clientes únicos com CPC",
+            num_fmt(_unicos_total),
+            "CPF/CNPJ deduplicado em toda a equipe; o mesmo cliente conta apenas uma vez.",
+        )
     with kv8:
         _media_geral = _vbase["cpcs_unicos"].mean() if not _vbase.empty else float("nan")
         metric_card("Média geral CPCs únicos", num_fmt(_media_geral) if not pd.isna(_media_geral) else "—")
@@ -3892,7 +4213,7 @@ with tabs[2]:
     ]
     data_table(cpc_df[cpc_cols])
 
-with tabs[3]:
+if selected_view == "Faixa de Atraso":
     pos_retomado_contratos = set(resultados.loc[resultados["CAMPANHA"].map(is_pos_retomado), "CONTRATO_KEY"])
     resultados_faixa = resultados[~resultados["CAMPANHA"].map(is_pos_retomado)].copy()
     eventos_faixa = eventos[~eventos["CONTRATO_KEY"].isin(pos_retomado_contratos)].copy()
@@ -3914,7 +4235,8 @@ with tabs[3]:
     _f_melhor = str(faixa_df.sort_values("valor_pago", ascending=False).iloc[0]["FAIXA_ATRASO"]) if not faixa_df.empty else "-"
     _f_maior_volume = str(faixa_df.sort_values("acordos", ascending=False).iloc[0]["FAIXA_ATRASO"]) if not faixa_df.empty else "-"
 
-    kf1, kf2, kf3, kf4, kf5 = st.columns(5)
+    kf1, kf2, kf3 = st.columns(3)
+    kf4, kf5 = st.columns(2)
     with kf1:
         metric_card("Faixas com acordos", num_fmt(_f_faixas_ativas))
     with kf2:
@@ -3990,7 +4312,7 @@ with tabs[3]:
     st.subheader("Melhor operador por faixa")
     data_table(best_faixa)
 
-with tabs[4]:
+if selected_view == "DPD":
     resultados_segmento = resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")].copy()
     eventos_segmento = eventos[eventos["SEGMENTO_DPD"].ne("Sem DPD")].copy()
     segmento_df = aggregate_resultados(resultados_segmento, "SEGMENTO_DPD")
@@ -4010,7 +4332,8 @@ with tabs[4]:
         row = segmento_df[segmento_df["SEGMENTO_DPD"].astype(str).eq(seg)]
         return row[col].iloc[0] if not row.empty else 0
 
-    ks1, ks2, ks3, ks4, ks5 = st.columns(5)
+    ks1, ks2, ks3 = st.columns(3)
+    ks4, ks5 = st.columns(2)
     with ks1:
         metric_card("POTLOSS — Recebido", money_fmt(_seg("valor_pago", "POTLOSS")))
     with ks2:
@@ -4094,7 +4417,7 @@ with tabs[4]:
     st.subheader("Resumo por segmento DPD")
     data_table(segmento_df[["SEGMENTO_DPD", "clientes", "acionamentos", "contatos_efetivos", "tx_contato", "acordos", "pagamentos", "acordos_em_aberto", "acordos_nao_pagou", "pct_quebra", "efetividade_pagamento", "valor_negociado", "valor_pago", "valor_em_aberto", "valor_nao_pagou", "valor_quebra", "recuperacao"]])
 
-with tabs[5]:
+if selected_view == "Região":
     regiao_df = aggregate_resultados(resultados, "REGIÃO").sort_values("valor_pago", ascending=False)
     regiao_chart = display_fields(regiao_df)
 
@@ -4106,7 +4429,8 @@ with tabs[5]:
     _r_top3_pct = regiao_df.head(3)["valor_pago"].sum() / _r_pago_total if _r_pago_total else 0
     _r_rec_media = float(regiao_df["recuperacao"].mean()) if not regiao_df.empty else 0
 
-    kr1, kr2, kr3, kr4, kr5 = st.columns(5)
+    kr1, kr2, kr3 = st.columns(3)
+    kr4, kr5 = st.columns(2)
     with kr1:
         metric_card("Regiões com acordos", num_fmt(_r_total_regioes))
     with kr2:
@@ -4179,7 +4503,7 @@ with tabs[5]:
     st.subheader("Top operadores por região")
     data_table(best_regiao)
 
-with tabs[6]:
+if selected_view == "Matriz":
     matrix = (
         resultados.groupby(["OPERADOR", "FAIXA_ATRASO", "REGIÃO"], observed=True)
         .agg(
@@ -4247,9 +4571,16 @@ with tabs[6]:
     st.subheader("Matriz analítica por operador, faixa e região")
     data_table(matrix.sort_values(["valor_pago", "pagamentos"], ascending=False))
 
-with tabs[7]:
+if selected_view == "Metas":
     st.subheader("Metas e quartis de atingimento")
-    st.caption("Meta geral lida da aba METAS da planilha de resultados. Meta mensal: R\\$ 190.000 para os 9 negociadores regulares; Victor Lima usa a meta individual de R\\$ 800.000 referente aos casos de pós retomado.")
+    special_goals_text = ", ".join(
+        f"{format_operator_label(operator)}: {money_fmt(goal)}"
+        for operator, goal in SPECIAL_OPERATOR_GOALS.items()
+    )
+    st.caption(
+        f"Meta geral lida da aba METAS. Meta mensal regular: {money_fmt(REGULAR_OPERATOR_GOAL)}. "
+        f"Metas especiais: {special_goals_text or 'nenhuma'}. Configuração em dashboard_config.json."
+    )
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
@@ -4281,13 +4612,14 @@ with tabs[7]:
         else gap_meta_total
     )
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1, c2, c3, c4 = st.columns(4)
+    c5, c6, c7 = st.columns(3)
     with c1:
         metric_card("Mês analisado", meses_texto)
     with c2:
         metric_card("Meta geral escritório", money_fmt(meta_geral))
     with c3:
-        metric_card("Honorarios escritorio", money_fmt(honorarios_escritorio))
+        metric_card("Honorários escritório", money_fmt(honorarios_escritorio))
     with c4:
         metric_card("Recebido", money_fmt(recebido_meta_geral))
     with c5:
@@ -4296,6 +4628,40 @@ with tabs[7]:
         metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
     with c7:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
+
+    st.subheader("Indicadores críticos de efetivação")
+    metas_total_acordos = len(resultados)
+    metas_total_pagamentos = int(resultados["IS_PAGO"].sum())
+    metas_total_nao_pagou = int(resultados["IS_NAO_PAGOU"].sum())
+    metas_base_quebras = metas_total_pagamentos + metas_total_nao_pagou
+    metas_valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
+    metas_valor_pago = resultados["VALOR_PAGO"].sum()
+
+    critical_1, critical_2, critical_3, critical_4 = st.columns(4)
+    with critical_1:
+        metric_card(
+            "Base quebras",
+            f"{num_fmt(metas_total_nao_pagou)} de {num_fmt(metas_base_quebras)}",
+            "Acordos não pagos dentro da base com desfecho: pagamentos + não pagos.",
+        )
+    with critical_2:
+        metric_card(
+            "Recuperação",
+            pct_fmt(scalar_safe_div(metas_valor_pago, metas_valor_negociado)),
+            "Valor recebido dividido pelo valor negociado.",
+        )
+    with critical_3:
+        metric_card(
+            "Taxa pgto",
+            pct_fmt(scalar_safe_div(metas_total_pagamentos, metas_total_acordos)),
+            "Quantidade de pagamentos dividida pelo total de acordos.",
+        )
+    with critical_4:
+        metric_card(
+            "Não pagou",
+            num_fmt(metas_total_nao_pagou),
+            "Acordos com status NÃO PAGOU no período filtrado.",
+        )
 
     meta_gauge(
         recebido_meta_geral,
@@ -4389,7 +4755,7 @@ with tabs[7]:
     ]
     data_table(metas_df[meta_cols])
 
-with tabs[8]:
+if selected_view == "Workplan":
     st.subheader("Workplan e priorização futura")
     if workplan_error:
         st.warning(workplan_error)
@@ -4408,7 +4774,8 @@ with tabs[8]:
         if base_workplan.empty:
             st.info("Sem contratos cobraveis, sem pagamento historico, sem acordo em aberto e fora de POS RETOMADO para recomendar.")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3 = st.columns(3)
+        c4, c5 = st.columns(2)
         with c1:
             metric_card("Contratos elegíveis", num_fmt(len(base_workplan)))
         with c2:
@@ -4694,7 +5061,7 @@ with tabs[8]:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-with tabs[9]:
+if selected_view == "Pagamentos":
     st.subheader("Analitica de pagamentos por perfil")
     st.caption("A taxa de pagamento considera todos os acordos do filtro atual: pagamentos divididos por acordos. A efetividade vencida considera apenas pagos e nao pagos, deixando em aberto fora do denominador.")
 
@@ -4829,7 +5196,7 @@ with tabs[9]:
             ]
             data_table(profile_view[detail_cols].head(100))
 
-with tabs[10]:
+if selected_view == "Insights":
     avg_score = operador_df["score"].mean() if not operador_df.empty else 0
     oportunidades = operador_df[(operador_df["acionamentos"] >= operador_df["acionamentos"].median()) & (operador_df["score"] < avg_score)].sort_values("acionamentos", ascending=False)
     destaques = operador_df[operador_df["score"] >= operador_df["score"].quantile(0.75)].sort_values("score", ascending=False)
@@ -4837,6 +5204,72 @@ with tabs[10]:
     faixas_oportunidade = faixas_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
     segmentos_oportunidade = aggregate_resultados(resultados[resultados["SEGMENTO_DPD"].ne("Sem DPD")], "SEGMENTO_DPD")
     segmentos_oportunidade = segmentos_oportunidade.sort_values(["valor_negociado", "recuperacao"], ascending=[False, True])
+
+    qualified_team = operador_df[operador_df["score_base_suficiente"]].copy()
+    team_benchmarks = {
+        "tx_contato": qualified_team["tx_contato"].median() if not qualified_team.empty else 0,
+        "tx_acordo": qualified_team["tx_acordo"].median() if not qualified_team.empty else 0,
+        "efetividade_pagamento": qualified_team["efetividade_pagamento"].median() if not qualified_team.empty else 0,
+    }
+    focus_labels = {
+        "tx_contato": "Aumentar contato efetivo/CPC",
+        "tx_acordo": "Converter CPC em acordo",
+        "efetividade_pagamento": "Reduzir quebra e efetivar boletos",
+    }
+    action_plan = oportunidades.copy()
+    if not action_plan.empty:
+        gap_columns = []
+        for metric, benchmark in team_benchmarks.items():
+            gap_col = f"_gap_{metric}"
+            action_plan[gap_col] = (benchmark - action_plan[metric]).clip(lower=0)
+            gap_columns.append(gap_col)
+        action_plan["_focus_metric"] = action_plan[gap_columns].idxmax(axis=1).str.replace("_gap_", "", regex=False)
+        action_plan["acao_recomendada"] = action_plan["_focus_metric"].map(focus_labels)
+        action_plan["valor_potencial"] = (
+            action_plan["valor_em_aberto"]
+            * (team_benchmarks["efetividade_pagamento"] - action_plan["efetividade_pagamento"]).clip(lower=0)
+        )
+        faixa_elegivel = faixa_operador_df[faixa_operador_df["cpcs"].ge(5)].copy()
+        if not faixa_elegivel.empty:
+            best_band = (
+                faixa_elegivel.sort_values(["OPERADOR", "tx_pagamento_cpc", "valor_pago"], ascending=[True, False, False])
+                .groupby("OPERADOR", observed=True)
+                .head(1)[["OPERADOR", "FAIXA_ATRASO"]]
+                .rename(columns={"FAIXA_ATRASO": "melhor_faixa"})
+            )
+            action_plan = action_plan.merge(best_band, on="OPERADOR", how="left")
+        else:
+            action_plan["melhor_faixa"] = "Sem base"
+        action_plan["melhor_faixa"] = action_plan["melhor_faixa"].fillna("Sem base")
+        action_plan = action_plan.sort_values(["valor_potencial", "valor_em_aberto"], ascending=False)
+
+    st.subheader("Plano de ação recomendado")
+    st.caption(
+        "Prioridades ordenadas pelo valor em aberto e pelo gap de efetividade contra a mediana da equipe. "
+        "Use como fila inicial de coaching e acompanhamento."
+    )
+    if action_plan.empty:
+        st.success("Nenhum operador com alto volume e score abaixo da média neste recorte.")
+    else:
+        action_cols = [
+            "OPERADOR",
+            "acao_recomendada",
+            "melhor_faixa",
+            "valor_em_aberto",
+            "valor_potencial",
+            "tx_contato",
+            "tx_acordo",
+            "efetividade_pagamento",
+            "score",
+            "confianca_score",
+        ]
+        data_table(action_plan[action_cols].head(10))
+        st.download_button(
+            "Baixar plano de ação",
+            data=dataframe_to_excel_bytes(action_plan[action_cols], sheet_name="Plano de acao"),
+            file_name="plano_acao_operadores.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     # ── KPIs de alerta ──────────────────────────────────────────────────────
     _i_destaques = len(destaques)

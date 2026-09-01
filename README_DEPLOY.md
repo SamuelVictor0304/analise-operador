@@ -5,6 +5,7 @@
 O deploy precisa conter estes arquivos na raiz do projeto:
 
 - `dashboard_operadores.py`
+- `dashboard_config.json`
 - `requirements.txt`
 - `Cobmais-Eventos-908-2026050417.xlsx`
 - `Pesquisa-Cliente-908-*.xlsx`
@@ -15,6 +16,10 @@ O deploy precisa conter estes arquivos na raiz do projeto:
 ```powershell
 python -m streamlit run dashboard_operadores.py
 ```
+
+Abra `http://localhost:8501` no navegador. Metas individuais, operadores ativos,
+dias úteis e amostra mínima do ranking podem ser ajustados em `dashboard_config.json`
+sem alterar o código da aplicação.
 
 ## Deploy público pelo Streamlit Community Cloud
 
