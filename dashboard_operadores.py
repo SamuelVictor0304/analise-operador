@@ -4636,8 +4636,10 @@ if selected_view == "Metas":
     metas_base_quebras = metas_total_pagamentos + metas_total_nao_pagou
     metas_valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
     metas_valor_pago = resultados["VALOR_PAGO"].sum()
+    metas_valor_quebras = resultados["VALOR_NAO_PAGOU"].sum()
 
-    critical_1, critical_2, critical_3, critical_4 = st.columns(4)
+    critical_1, critical_2, critical_3 = st.columns(3)
+    critical_4, critical_5 = st.columns(2)
     with critical_1:
         metric_card(
             "Base quebras",
@@ -4646,21 +4648,27 @@ if selected_view == "Metas":
         )
     with critical_2:
         metric_card(
+            "Não pagou",
+            num_fmt(metas_total_nao_pagou),
+            "Acordos com status NÃO PAGOU no período filtrado.",
+        )
+    with critical_3:
+        metric_card(
+            "Valor quebras",
+            money_fmt(metas_valor_quebras),
+            "Soma do valor negociado dos acordos com status NÃO PAGOU.",
+        )
+    with critical_4:
+        metric_card(
             "Recuperação",
             pct_fmt(scalar_safe_div(metas_valor_pago, metas_valor_negociado)),
             "Valor recebido dividido pelo valor negociado.",
         )
-    with critical_3:
+    with critical_5:
         metric_card(
             "Taxa pgto",
             pct_fmt(scalar_safe_div(metas_total_pagamentos, metas_total_acordos)),
             "Quantidade de pagamentos dividida pelo total de acordos.",
-        )
-    with critical_4:
-        metric_card(
-            "Não pagou",
-            num_fmt(metas_total_nao_pagou),
-            "Acordos com status NÃO PAGOU no período filtrado.",
         )
 
     meta_gauge(
