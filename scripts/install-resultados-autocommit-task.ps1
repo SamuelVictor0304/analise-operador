@@ -1,7 +1,7 @@
 param(
     [string]$RepoPath = (Resolve-Path "$PSScriptRoot\..").Path,
     [string]$TaskName = "AnaliseOperadoresAutoCommitResultados",
-    [int]$IntervalMinutes = 5
+    [int]$IntervalSeconds = 90
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +22,7 @@ $quotedLog = '"' + $logFile + '"'
 $arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -RepoPath $quotedRepo -LogFile $quotedLog -RunOnce -QuietWhenClean"
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments -WorkingDirectory $RepoPath
-$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Seconds $IntervalSeconds)
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
@@ -45,15 +45,15 @@ try {
     Start-ScheduledTask -TaskName $TaskName
 
     Write-Host "Tarefa instalada: $TaskName"
-    Write-Host "Execucao: a cada $IntervalMinutes minutos, no logon e com 3 tentativas em caso de falha."
+    Write-Host "Execucao: a cada $IntervalSeconds segundos, no logon e com 3 tentativas em caso de falha."
     Write-Host "A primeira verificacao foi iniciada agora."
 }
 catch {
-    $pollSeconds = $IntervalMinutes * 60
-    $cmd = "@echo off`r`nstart `"`" /min powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds`r`n"
+    $pollSeconds = $IntervalSeconds
+    $cmd = "@echo off`r`nstart `"`" /min powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds -QuietWhenClean`r`n"
     Set-Content -LiteralPath $startupCmd -Value $cmd -Encoding ASCII
 
-    $backgroundArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds"
+    $backgroundArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds -QuietWhenClean"
     Start-Process `
         -FilePath "powershell.exe" `
         -ArgumentList $backgroundArguments `

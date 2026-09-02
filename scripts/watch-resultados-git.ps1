@@ -3,13 +3,18 @@ param(
     [string]$FileName = "NOVA BASE RESULTADOS 2026.xlsm",
     [string]$Remote = "origin",
     [string]$Branch = "main",
-    [int]$PollSeconds = 300,
+    [int]$PollSeconds = 90,
     [string]$LogFile = "",
     [switch]$RunOnce,
     [switch]$QuietWhenClean
 )
 
 $ErrorActionPreference = "Stop"
+
+# Evita crescimento desnecessario do log nas verificacoes em que nada mudou.
+if (-not $PSBoundParameters.ContainsKey("QuietWhenClean")) {
+    $QuietWhenClean = $true
+}
 
 function Write-Log {
     param([string]$Message)
