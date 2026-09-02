@@ -1,6 +1,7 @@
 param(
     [string]$RepoPath = (Resolve-Path "$PSScriptRoot\..").Path,
-    [string]$TaskName = "AnaliseOperadoresAutoCommitResultados"
+    [string]$TaskName = "AnaliseOperadoresAutoCommitResultados",
+    [int]$IntervalMinutes = 5
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,28 +13,55 @@ if (-not (Test-Path -LiteralPath $watchScript)) {
 
 $quotedScript = '"' + $watchScript + '"'
 $quotedRepo = '"' + $RepoPath + '"'
-$arguments = "-NoProfile -ExecutionPolicy Bypass -File $quotedScript -RepoPath $quotedRepo"
+$logDir = Join-Path $RepoPath "logs"
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+$logFile = Join-Path $logDir "resultados-autocommit.log"
+$quotedLog = '"' + $logFile + '"'
+$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -RepoPath $quotedRepo -LogFile $quotedLog -RunOnce -QuietWhenClean"
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments -WorkingDirectory $RepoPath
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+$settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1)
+
+$startupDir = [Environment]::GetFolderPath("Startup")
+$startupCmd = Join-Path $startupDir "$TaskName.cmd"
 
 try {
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "Monitora a base de resultados e faz commit/push automatico quando ela for alterada." -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($periodicTrigger, $logonTrigger) -Settings $settings -Description "Verifica periodicamente a base de resultados e faz commit/push automatico quando ela for alterada." -Force | Out-Null
+
+    if (Test-Path -LiteralPath $startupCmd) {
+        Remove-Item -LiteralPath $startupCmd -Force
+    }
+
+    Start-ScheduledTask -TaskName $TaskName
 
     Write-Host "Tarefa instalada: $TaskName"
-    Write-Host "Para iniciar agora:"
-    Write-Host "Start-ScheduledTask -TaskName `"$TaskName`""
+    Write-Host "Execucao: a cada $IntervalMinutes minutos, no logon e com 3 tentativas em caso de falha."
+    Write-Host "A primeira verificacao foi iniciada agora."
 }
 catch {
-    $startupDir = [Environment]::GetFolderPath("Startup")
-    $startupCmd = Join-Path $startupDir "$TaskName.cmd"
-    $cmd = "@echo off`r`nstart `"`" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`"`r`n"
+    $pollSeconds = $IntervalMinutes * 60
+    $cmd = "@echo off`r`nstart `"`" /min powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds`r`n"
     Set-Content -LiteralPath $startupCmd -Value $cmd -Encoding ASCII
+
+    $backgroundArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`" -PollSeconds $pollSeconds"
+    Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList $backgroundArguments `
+        -WorkingDirectory $RepoPath `
+        -WindowStyle Hidden
 
     Write-Host "Nao foi possivel instalar no Agendador de Tarefas: $($_.Exception.Message)"
     Write-Host "Fallback instalado na inicializacao do Windows:"
     Write-Host $startupCmd
-    Write-Host "Para iniciar agora:"
-    Write-Host "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$watchScript`" -RepoPath `"$RepoPath`""
+    Write-Host "Monitor por polling iniciado agora em segundo plano."
 }

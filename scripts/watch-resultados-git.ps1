@@ -3,8 +3,10 @@ param(
     [string]$FileName = "NOVA BASE RESULTADOS 2026.xlsm",
     [string]$Remote = "origin",
     [string]$Branch = "main",
-    [int]$DebounceSeconds = 20,
-    [string]$LogFile = ""
+    [int]$PollSeconds = 300,
+    [string]$LogFile = "",
+    [switch]$RunOnce,
+    [switch]$QuietWhenClean
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,11 +85,18 @@ function Commit-Resultados {
     Set-Location -LiteralPath $RepoPath
     $targetPath = Join-Path $RepoPath $FileName
 
+    $currentBranch = (& git branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $currentBranch -ne $Branch) {
+        throw "Branch atual '$currentBranch' difere da branch configurada '$Branch'."
+    }
+
     Wait-FileStable -Path $targetPath
 
     $status = & git status --porcelain -- $FileName
     if ([string]::IsNullOrWhiteSpace($status)) {
-        Write-Log "Nenhuma alteracao pendente em '$FileName'."
+        if (-not $QuietWhenClean) {
+            Write-Log "Nenhuma alteracao pendente em '$FileName'."
+        }
         return
     }
 
@@ -101,7 +110,8 @@ function Commit-Resultados {
     }
 
     $commitStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Invoke-Git -GitArgs @("commit", "-m", "Atualiza base de resultados ($commitStamp)") | Out-Null
+    # --only garante que outros arquivos eventualmente staged nunca entrem no autocommit.
+    Invoke-Git -GitArgs @("commit", "--only", "-m", "Atualiza base de resultados ($commitStamp)", "--", $FileName) | Out-Null
 
     try {
         Invoke-Git -GitArgs @("push", $Remote, $Branch) | Out-Null
@@ -125,52 +135,40 @@ if ([string]::IsNullOrWhiteSpace($LogFile)) {
 }
 
 $watchPath = Join-Path $RepoPath $FileName
-$watchDir = Split-Path -Parent $watchPath
-$watchFile = Split-Path -Leaf $watchPath
 
-Write-Log "Monitorando '$watchPath'. Pressione Ctrl+C para parar."
-
-try {
-    Commit-Resultados
+if ($RunOnce) {
+    try {
+        Commit-Resultados
+        exit 0
+    }
+    catch {
+        Write-Log "Erro na automacao: $($_.Exception.Message)"
+        exit 1
+    }
 }
-catch {
-    Write-Log "Erro na verificacao inicial: $($_.Exception.Message)"
+
+$mutexCreated = $false
+$mutex = [System.Threading.Mutex]::new($true, "Local\AnaliseOperadoresAutoCommitResultados", [ref]$mutexCreated)
+if (-not $mutexCreated) {
+    Write-Log "Monitor de autocommit ja esta em execucao. Encerrando instancia duplicada."
+    $mutex.Dispose()
+    exit 0
 }
 
-$watcher = New-Object System.IO.FileSystemWatcher
-$watcher.Path = $watchDir
-$watcher.Filter = $watchFile
-$watcher.IncludeSubdirectories = $false
-$watcher.EnableRaisingEvents = $true
-
-$events = @("Changed", "Created", "Renamed")
-foreach ($eventName in $events) {
-    Register-ObjectEvent -InputObject $watcher -EventName $eventName -SourceIdentifier "ResultadosGit$eventName" | Out-Null
-}
+Write-Log "Monitoramento ativo por verificacao a cada $PollSeconds segundos: '$watchPath'."
 
 try {
     while ($true) {
-        $event = Wait-Event -Timeout 5
-        if ($null -eq $event) {
-            continue
-        }
-
-        Remove-Event -EventIdentifier $event.EventIdentifier
-        Start-Sleep -Seconds $DebounceSeconds
-
-        Get-Event | Where-Object { $_.SourceIdentifier -like "ResultadosGit*" } | Remove-Event
-
         try {
             Commit-Resultados
         }
         catch {
             Write-Log "Erro na automacao: $($_.Exception.Message)"
         }
+        Start-Sleep -Seconds $PollSeconds
     }
 }
 finally {
-    foreach ($eventName in $events) {
-        Unregister-Event -SourceIdentifier "ResultadosGit$eventName" -ErrorAction SilentlyContinue
-    }
-    $watcher.Dispose()
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }
