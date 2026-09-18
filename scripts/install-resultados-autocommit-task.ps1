@@ -1,7 +1,7 @@
 param(
     [string]$RepoPath = (Resolve-Path "$PSScriptRoot\..").Path,
     [string]$TaskName = "AnaliseOperadoresAutoCommitResultados",
-    [int]$IntervalSeconds = 90
+    [int]$IntervalSeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,16 +19,17 @@ if (-not (Test-Path -LiteralPath $logDir)) {
 }
 $logFile = Join-Path $logDir "resultados-autocommit.log"
 $quotedLog = '"' + $logFile + '"'
-$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -RepoPath $quotedRepo -LogFile $quotedLog -RunOnce -QuietWhenClean"
+$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -RepoPath $quotedRepo -LogFile $quotedLog -PollSeconds $IntervalSeconds -QuietWhenClean"
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments -WorkingDirectory $RepoPath
-$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Seconds $IntervalSeconds)
+$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -MultipleInstances IgnoreNew `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1)
 
