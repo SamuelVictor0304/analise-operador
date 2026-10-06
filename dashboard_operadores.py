@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from html import escape
 from io import BytesIO
 import json
@@ -4583,6 +4583,7 @@ if selected_view == "Metas":
     )
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
+    metas_valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
     recebido_meta_geral = resultados["VALOR_PAGO"].sum()
     honorarios_escritorio = resultados["HONORARIOS_ESCRITORIO"].sum()
     valor_aberto_meta_geral = resultados["VALOR_EM_ABERTO"].sum()
@@ -4613,7 +4614,7 @@ if selected_view == "Metas":
     )
 
     c1, c2, c3, c4 = st.columns(4)
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     with c1:
         metric_card("Mês analisado", meses_texto)
     with c2:
@@ -4623,10 +4624,17 @@ if selected_view == "Metas":
     with c4:
         metric_card("Recebido", money_fmt(recebido_meta_geral))
     with c5:
-        metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
+        metric_card(
+            "Valor negociado no mês",
+            money_fmt(metas_valor_negociado),
+            "Soma de VALOR DO BANCO - META de todos os acordos do mês selecionado, "
+            "incluindo pagos, em aberto e não pagos, respeitando os filtros ativos.",
+        )
     with c6:
-        metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
+        metric_card("% meta geral", pct_fmt(recebido_meta_geral / meta_geral if meta_geral else 0))
     with c7:
+        metric_card("Em aberto", money_fmt(valor_aberto_meta_geral))
+    with c8:
         metric_card("% aberto/meta", pct_fmt(valor_aberto_meta_geral / meta_geral if meta_geral else 0))
 
     st.subheader("Indicadores críticos de efetivação")
@@ -4634,7 +4642,6 @@ if selected_view == "Metas":
     metas_total_pagamentos = int(resultados["IS_PAGO"].sum())
     metas_total_nao_pagou = int(resultados["IS_NAO_PAGOU"].sum())
     metas_base_quebras = metas_total_pagamentos + metas_total_nao_pagou
-    metas_valor_negociado = resultados["VALOR_NEGOCIADO"].sum()
     metas_valor_pago = resultados["VALOR_PAGO"].sum()
     metas_valor_quebras = resultados["VALOR_NAO_PAGOU"].sum()
 
