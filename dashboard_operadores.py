@@ -819,6 +819,7 @@ def build_region_goal_map(months, resultados=None):
         return region_goals
 
     month_keys = [normalize_month_key(month) for month in months]
+    fallback_month = None
     selected = region_goals[region_goals["MES_RESULTADO"].isin(month_keys)].copy()
     selected = selected[selected["meta_regiao"] > 0]
     if selected.empty:
@@ -827,7 +828,8 @@ def build_region_goal_map(months, resultados=None):
             return positive
         latest_month = positive["MES_RESULTADO"].drop_duplicates().iloc[-1]
         selected = positive[positive["MES_RESULTADO"].eq(latest_month)].copy()
-        month_keys = [latest_month]
+        # A referencia da meta nao altera o periodo dos recebimentos.
+        fallback_month = latest_month
 
     df = (
         selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False, observed=True)
@@ -841,14 +843,16 @@ def build_region_goal_map(months, resultados=None):
     if resultados is not None and not resultados.empty:
         pagos = resultados.copy()
         if "MES_RESULTADO" in pagos.columns and month_keys:
-            pagos = pagos[pagos["MES_RESULTADO"].isin(month_keys)]
+            pagos = pagos[pagos["MES_RESULTADO"].map(normalize_month_key).isin(month_keys)]
         if not pagos.empty and "REGIÃO" in pagos.columns and "VALOR_PAGO" in pagos.columns:
             pagos["REGIAO_KEY"] = pagos["REGIÃO"].map(normalize_month_key)
             soma = pagos.groupby("REGIAO_KEY", dropna=False, observed=True)["VALOR_PAGO"].sum()
             df["valor_pago"] = df["REGIAO_KEY"].map(soma).fillna(0.0)
 
     df["pct_meta_regiao"] = safe_div(df["valor_pago"], df["meta_regiao"])
-    return df.sort_values("pct_meta_regiao", ascending=False)
+    df = df.sort_values("pct_meta_regiao", ascending=False)
+    df.attrs["meta_mes_referencia"] = fallback_month
+    return df
 
 
 @st.cache_data(show_spinner=False)
@@ -4700,6 +4704,12 @@ if selected_view == "Metas":
     )
 
     region_meta_df = build_region_goal_map(meses_meta, resultados)
+    if region_meta_df.attrs.get("meta_mes_referencia"):
+        st.caption(
+            f"Meta regional de referência: {region_meta_df.attrs['meta_mes_referencia']} "
+            f"(sem meta positiva cadastrada para {meses_texto}). "
+            f"Os recebimentos são de {meses_texto} e respeitam os filtros ativos."
+        )
     region_meta_map(region_meta_df, f"% da meta por região — {meses_texto}")
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
