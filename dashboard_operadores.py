@@ -614,15 +614,7 @@ def office_goal_for_resultados(resultados):
 def office_goal_for_months(months):
     metas_gerais = load_office_goals(file_version(RESULTADOS_FILE))
     month_keys = list(dict.fromkeys(normalize_month_key(mes) for mes in months if normalize_month_key(mes)))
-    selected_goals = [metas_gerais.get(mes, 0) for mes in month_keys]
-    positive_goals = [goal for goal in selected_goals if goal > 0]
-    if positive_goals:
-        return sum(positive_goals)
-
-    available_goals = [goal for goal in metas_gerais.values() if goal > 0]
-    if not available_goals:
-        return 0
-    return available_goals[-1]
+    return sum(metas_gerais.get(mes, 0) for mes in month_keys)
 
 
 def operator_goal_series(operadores, meses_count):
@@ -709,8 +701,7 @@ def load_office_goals(data_version):
         if target_col is not None:
             goals[normalize_month_key(month)] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
     goals = {k: float(v) for k, v in goals.items() if pd.notna(v)}
-    # Meta de agosto ainda nao cadastrada na aba METAS: reaproveita a meta de julho por enquanto.
-    return carry_over_month_goal(goals)
+    return goals
 
 
 @st.cache_data(show_spinner=False, max_entries=2)
@@ -805,11 +796,6 @@ def load_region_goals(data_version):
             )
 
     df = pd.DataFrame(rows)
-    if not df.empty:
-        # Meta regional de agosto ainda nao cadastrada na aba METAS: reaproveita a meta de julho por enquanto.
-        fonte = df.loc[df["MES_RESULTADO"] == GOAL_FALLBACK_SOURCE_MONTH].set_index("REGIAO_KEY")["meta_regiao"]
-        alvo_mask = (df["MES_RESULTADO"] == GOAL_FALLBACK_TARGET_MONTH) & (df["meta_regiao"] <= 0)
-        df.loc[alvo_mask, "meta_regiao"] = df.loc[alvo_mask, "REGIAO_KEY"].map(fonte).fillna(0)
     return df
 
 
@@ -818,18 +804,11 @@ def build_region_goal_map(months, resultados=None):
     if region_goals.empty:
         return region_goals
 
-    month_keys = [normalize_month_key(month) for month in months]
-    fallback_month = None
-    selected = region_goals[region_goals["MES_RESULTADO"].isin(month_keys)].copy()
+    month_keys = list(dict.fromkeys(normalize_month_key(month) for month in months))
+    selected = region_goals[region_goals["MES_RESULTADO"].map(normalize_month_key).isin(month_keys)].copy()
     selected = selected[selected["meta_regiao"] > 0]
     if selected.empty:
-        positive = region_goals[region_goals["meta_regiao"] > 0].copy()
-        if positive.empty:
-            return positive
-        latest_month = positive["MES_RESULTADO"].drop_duplicates().iloc[-1]
-        selected = positive[positive["MES_RESULTADO"].eq(latest_month)].copy()
-        # A referencia da meta nao altera o periodo dos recebimentos.
-        fallback_month = latest_month
+        return selected
 
     df = (
         selected.groupby(["REGIÃO", "REGIAO_KEY"], dropna=False, observed=True)
@@ -851,7 +830,6 @@ def build_region_goal_map(months, resultados=None):
 
     df["pct_meta_regiao"] = safe_div(df["valor_pago"], df["meta_regiao"])
     df = df.sort_values("pct_meta_regiao", ascending=False)
-    df.attrs["meta_mes_referencia"] = fallback_month
     return df
 
 
@@ -866,7 +844,7 @@ def _load_brazil_regions_svg():
 
 def region_meta_map(region_df, title):
     if region_df.empty:
-        st.info("Sem metas regionais cadastradas na aba METAS para montar o mapa.")
+        st.info("Sem metas regionais positivas cadastradas na aba METAS para os meses selecionados.")
         return
 
     # IBGE region IDs no SVG: 1=Norte, 2=Nordeste, 3=Sudeste, 4=Sul, 5=Centro-Oeste
@@ -4582,8 +4560,9 @@ if selected_view == "Metas":
         for operator, goal in SPECIAL_OPERATOR_GOALS.items()
     )
     st.caption(
-        f"Meta geral lida da aba METAS. Meta mensal regular: {money_fmt(REGULAR_OPERATOR_GOAL)}. "
-        f"Metas especiais: {special_goals_text or 'nenhuma'}. Configuração em dashboard_config.json."
+        "Metas geral e regionais lidas da aba METAS para os meses selecionados, sem substituir por outro mês. "
+        f"Metas individuais mantidas na configuração: regular {money_fmt(REGULAR_OPERATOR_GOAL)}; "
+        f"especiais: {special_goals_text or 'nenhuma'}."
     )
 
     metas_df, meses_meta, meta_geral = build_meta_analysis(operador_df, resultados, operadores_filtrados)
@@ -4704,12 +4683,10 @@ if selected_view == "Metas":
     )
 
     region_meta_df = build_region_goal_map(meses_meta, resultados)
-    if region_meta_df.attrs.get("meta_mes_referencia"):
-        st.caption(
-            f"Meta regional de referência: {region_meta_df.attrs['meta_mes_referencia']} "
-            f"(sem meta positiva cadastrada para {meses_texto}). "
-            f"Os recebimentos são de {meses_texto} e respeitam os filtros ativos."
-        )
+    st.caption(
+        f"Metas regionais da aba METAS para {meses_texto}. "
+        "Recebimentos do período selecionado, respeitando os filtros ativos."
+    )
     region_meta_map(region_meta_df, f"% da meta por região — {meses_texto}")
 
     meta_resumo = metas_df["diagnostico_meta"].value_counts().reset_index()
