@@ -14,7 +14,7 @@ def break_namespace():
     names = {
         "normalize_text", "normalize_status", "normalize_month_key",
         "selected_months", "result_months_frame", "build_monthly_break_goal_analysis",
-        "load_office_goals", "money_fmt", "num_fmt", "pct_fmt", "monthly_break_goal_section",
+        "load_office_goals",
     }
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     nodes += [node for node in tree.body if isinstance(node, ast.Assign)

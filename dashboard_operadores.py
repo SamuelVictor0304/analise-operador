@@ -642,34 +642,6 @@ def build_monthly_break_goal_analysis(resultados, months=None):
     return monthly.sort_values("MES_NUM", na_position="last").reset_index(drop=True)
 
 
-def monthly_break_goal_section(monthly):
-    st.subheader("Impacto das quebras na meta por mês")
-    st.caption(
-        "Quebras/meta (%) = valor dos acordos NÃO PAGOU ÷ meta geral do mesmo mês × 100. "
-        "Os valores respeitam os filtros ativos; a referência é a meta integral do escritório. "
-        "Sem meta positiva cadastrada, o percentual fica indisponível (—)."
-    )
-    if monthly.empty:
-        st.info("Sem meses para analisar nos filtros selecionados.")
-        return
-    table = monthly[["MES_RESULTADO", "acordos_nao_pagou", "valor_quebra", "meta_geral_escritorio", "pct_quebra"]].copy()
-    table["MES_RESULTADO"] = monthly["MES_NUM"].map(MONTH_NAMES_PT).fillna(table["MES_RESULTADO"])
-    # Preserve missing goals: money_fmt normally renders NaN as zero.
-    table["meta_geral_escritorio"] = table["meta_geral_escritorio"].map(
-        lambda value: "—" if pd.isna(value) else money_fmt(value)
-    )
-    table["valor_quebra"] = table["valor_quebra"].map(money_fmt)
-    table["acordos_nao_pagou"] = table["acordos_nao_pagou"].map(num_fmt)
-    table["pct_quebra"] = table["pct_quebra"].map(pct_fmt)
-    stretch_dataframe(table.rename(columns={
-        "MES_RESULTADO": "Mês",
-        "acordos_nao_pagou": "Acordos não pagos",
-        "valor_quebra": "Valor das quebras",
-        "meta_geral_escritorio": "Meta do mês",
-        "pct_quebra": "Quebras/meta (%)",
-    }), hide_index=True)
-
-
 def operator_goal_series(operadores, meses_count):
     operadores = operadores.astype(object).fillna("")
     base_goal = operadores.map(SPECIAL_OPERATOR_GOALS)
@@ -3681,7 +3653,6 @@ if selected_view == "Visão Geral":
             "Valor das quebras dividido pela meta geral dos meses selecionados."
             if metas_quebras_validas else "Percentual indisponível: falta meta positiva para algum mês selecionado.",
         )
-    monthly_break_goal_section(quebras_mensais)
 
 if selected_view == "Visão Geral":
     c1, c2 = st.columns([1.2, 1])
@@ -4734,8 +4705,6 @@ if selected_view == "Metas":
             "Valor das quebras dividido pela meta geral dos meses selecionados."
             if metas_quebras_validas else "Percentual indisponível: falta meta positiva para algum mês selecionado.",
         )
-
-    monthly_break_goal_section(quebras_mensais)
 
     meta_gauge(
         recebido_meta_geral,
