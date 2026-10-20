@@ -270,7 +270,7 @@ FIELD_HELP = {
     "acordos_sem_pagamento": ("Acordos sem pagamento", "Acordos sem status pago e sem data de pagamento."),
     "acordos_em_aberto": ("Acordos em aberto", "Acordos com status EM ABERTO na base de resultados."),
     "acordos_nao_pagou": ("Acordos não pagos", "Acordos com status NÃO PAGOU na base de resultados."),
-    "pct_quebra": ("% quebras", "Impacto financeiro das quebras na meta: valor dos acordos não pagos dividido pela meta aplicável."),
+    "pct_quebra": ("% quebras/meta", "Impacto financeiro das quebras na meta: valor dos acordos não pagos dividido pela meta aplicável."),
     "tx_contato": ("Taxa de CPC", "CPCs divididos pelo total de acionamentos."),
     "tx_acordo": ("Taxa CPC -> acordo", "Acordos divididos pelo total de CPCs do operador."),
     "tx_acordo_cliente_cpc": ("Taxa contrato CPC -> acordo", "Acordos divididos pelos contratos distintos com CPC."),
@@ -615,6 +615,59 @@ def office_goal_for_months(months):
     metas_gerais = load_office_goals(file_version(RESULTADOS_FILE))
     month_keys = list(dict.fromkeys(normalize_month_key(mes) for mes in months if normalize_month_key(mes)))
     return sum(metas_gerais.get(mes, 0) for mes in month_keys)
+
+
+def build_monthly_break_goal_analysis(resultados, months=None):
+    """Compare filtered break amounts with each month's own office goal."""
+    goals = load_office_goals(file_version(RESULTADOS_FILE))
+    month_numbers = {normalize_month_key(name): number for number, name in MONTH_NAMES_PT.items()}
+    month_keys = list(dict.fromkeys(
+        normalize_month_key(month)
+        for month in (months if months else selected_months(resultados))
+        if normalize_month_key(month)
+    ))
+    monthly = pd.DataFrame({"MES_RESULTADO": pd.Series(month_keys, dtype=object)})
+    monthly["MES_NUM"] = monthly["MES_RESULTADO"].map(month_numbers)
+    amounts = (
+        resultados.assign(MES_RESULTADO=resultados["MES_RESULTADO"].map(normalize_month_key).astype(object))
+        .groupby("MES_RESULTADO", observed=True)
+        .agg(valor_quebra=("VALOR_NAO_PAGOU", "sum"), acordos_nao_pagou=("IS_NAO_PAGOU", "sum"))
+    )
+    monthly = monthly.join(amounts, on="MES_RESULTADO")
+    monthly[["valor_quebra", "acordos_nao_pagou"]] = monthly[["valor_quebra", "acordos_nao_pagou"]].fillna(0)
+    monthly["meta_geral_escritorio"] = monthly["MES_RESULTADO"].map(goals)
+    monthly["pct_quebra"] = monthly["valor_quebra"] / monthly["meta_geral_escritorio"].where(
+        monthly["meta_geral_escritorio"] > 0
+    )
+    return monthly.sort_values("MES_NUM", na_position="last").reset_index(drop=True)
+
+
+def monthly_break_goal_section(monthly):
+    st.subheader("Impacto das quebras na meta por mês")
+    st.caption(
+        "Quebras/meta (%) = valor dos acordos NÃO PAGOU ÷ meta geral do mesmo mês × 100. "
+        "Os valores respeitam os filtros ativos; a referência é a meta integral do escritório. "
+        "Sem meta positiva cadastrada, o percentual fica indisponível (—)."
+    )
+    if monthly.empty:
+        st.info("Sem meses para analisar nos filtros selecionados.")
+        return
+    table = monthly[["MES_RESULTADO", "acordos_nao_pagou", "valor_quebra", "meta_geral_escritorio", "pct_quebra"]].copy()
+    table["MES_RESULTADO"] = monthly["MES_NUM"].map(MONTH_NAMES_PT).fillna(table["MES_RESULTADO"])
+    # Preserve missing goals: money_fmt normally renders NaN as zero.
+    table["meta_geral_escritorio"] = table["meta_geral_escritorio"].map(
+        lambda value: "—" if pd.isna(value) else money_fmt(value)
+    )
+    table["valor_quebra"] = table["valor_quebra"].map(money_fmt)
+    table["acordos_nao_pagou"] = table["acordos_nao_pagou"].map(num_fmt)
+    table["pct_quebra"] = table["pct_quebra"].map(pct_fmt)
+    stretch_dataframe(table.rename(columns={
+        "MES_RESULTADO": "Mês",
+        "acordos_nao_pagou": "Acordos não pagos",
+        "valor_quebra": "Valor das quebras",
+        "meta_geral_escritorio": "Meta do mês",
+        "pct_quebra": "Quebras/meta (%)",
+    }), hide_index=True)
 
 
 def operator_goal_series(operadores, meses_count):
@@ -3549,7 +3602,12 @@ valor_nao_pagou = resultados["VALOR_NAO_PAGOU"].sum()
 meta_geral_atual = office_goal_for_resultados(resultados)
 tx_pagamento_geral = total_pagamentos / total_acordos if total_acordos else 0
 efetividade_pagamento_geral = total_pagamentos / (total_pagamentos + total_nao_pagou) if (total_pagamentos + total_nao_pagou) else 0
-pct_quebra_geral = valor_nao_pagou / meta_geral_atual if meta_geral_atual else 0
+quebras_mensais = build_monthly_break_goal_analysis(resultados, filter_context["meses"])
+metas_quebras_validas = not quebras_mensais.empty and quebras_mensais["meta_geral_escritorio"].gt(0).all()
+pct_quebra_geral = (
+    quebras_mensais["valor_quebra"].sum() / quebras_mensais["meta_geral_escritorio"].sum()
+    if metas_quebras_validas else np.nan
+)
 previous_results = previous_results_slice(resultados_raw, eventos_raw, filter_context)
 previous_received = previous_results["VALOR_PAGO"].sum() if not previous_results.empty else None
 previous_open = previous_results["VALOR_EM_ABERTO"].sum() if not previous_results.empty else None
@@ -3566,7 +3624,7 @@ tx_cpc_pagamento_geral = scalar_safe_div(total_pagamentos, total_unique_cpcs)
 if selected_view == "Visão Geral":
     st.subheader("Resumo executivo")
     kpi_row1 = st.columns(3)
-    kpi_row2 = st.columns(3)
+    kpi_row2 = st.columns(4)
     with kpi_row1[0]:
         metric_card(
             "Recebido",
@@ -3615,6 +3673,15 @@ if selected_view == "Visão Geral":
             "vs. mês anterior" if previous_break is not None else None,
             delta_is_good=False,
         )
+
+    with kpi_row2[3]:
+        metric_card(
+            "Quebras sobre a meta",
+            pct_fmt(pct_quebra_geral),
+            "Valor das quebras dividido pela meta geral dos meses selecionados."
+            if metas_quebras_validas else "Percentual indisponível: falta meta positiva para algum mês selecionado.",
+        )
+    monthly_break_goal_section(quebras_mensais)
 
 if selected_view == "Visão Geral":
     c1, c2 = st.columns([1.2, 1])
@@ -4629,7 +4696,7 @@ if selected_view == "Metas":
     metas_valor_quebras = resultados["VALOR_NAO_PAGOU"].sum()
 
     critical_1, critical_2, critical_3 = st.columns(3)
-    critical_4, critical_5 = st.columns(2)
+    critical_4, critical_5, critical_6 = st.columns(3)
     with critical_1:
         metric_card(
             "Base quebras",
@@ -4660,6 +4727,15 @@ if selected_view == "Metas":
             pct_fmt(scalar_safe_div(metas_total_pagamentos, metas_total_acordos)),
             "Quantidade de pagamentos dividida pelo total de acordos.",
         )
+    with critical_6:
+        metric_card(
+            "Quebras sobre a meta",
+            pct_fmt(pct_quebra_geral),
+            "Valor das quebras dividido pela meta geral dos meses selecionados."
+            if metas_quebras_validas else "Percentual indisponível: falta meta positiva para algum mês selecionado.",
+        )
+
+    monthly_break_goal_section(quebras_mensais)
 
     meta_gauge(
         recebido_meta_geral,
