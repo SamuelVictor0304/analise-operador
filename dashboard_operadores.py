@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from pos_retomado import render_pos_retomado
+
 
 BASE_DIR = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "dashboard_config.json"
@@ -24,7 +26,7 @@ EXCLUDED_OPERATOR_PREFIXES = ()
 
 def load_dashboard_config():
     defaults = {
-        "regular_operator_goal": 190000,
+        "regular_operator_goal": 200000,
         "special_operator_goals": {"victor.lima": 800000},
         "regular_meta_operators": [
             "ana.karolina.oliveira",
@@ -1711,6 +1713,7 @@ NAVIGATION_GROUPS = {
     "Operadores": ["Operadores", "CPC"],
     "Segmentos": ["Faixa de Atraso", "DPD", "Região", "Matriz"],
     "Metas": ["Metas", "Pagamentos"],
+    "Pós Retomado": ["Pós Retomado"],
     "Workplan": ["Workplan"],
 }
 
@@ -3513,8 +3516,11 @@ def glossary():
             st.markdown(f"**{name}:** {desc}")
 
 
-eventos_raw, contratos_raw, resultados_raw = load_data(data_file_versions())
 selected_view = navigation_controls()
+if selected_view == "Pós Retomado":
+    render_pos_retomado(RESULTADOS_FILE)
+    st.stop()
+eventos_raw, contratos_raw, resultados_raw = load_data(data_file_versions())
 eventos, resultados, operadores_filtrados, filter_context = apply_filters(eventos_raw, resultados_raw)
 eventos, resultados = ensure_cpc_client_key(eventos, resultados)
 eventos_raw, resultados_raw = ensure_cpc_client_key(eventos_raw, resultados_raw)

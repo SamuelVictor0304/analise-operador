@@ -5,6 +5,7 @@
 O deploy precisa conter estes arquivos na raiz do projeto:
 
 - `dashboard_operadores.py`
+- `pos_retomado.py`
 - `dashboard_config.json`
 - `requirements.txt`
 - `Cobmais-Eventos-908-2026050417.xlsx`
