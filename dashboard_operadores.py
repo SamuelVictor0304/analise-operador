@@ -63,8 +63,8 @@ REGULAR_META_OPERATORS = set(DASHBOARD_CONFIG["regular_meta_operators"])
 # Meta so existe para estes operadores; a lista fica no dashboard_config.json.
 ACTIVE_META_OPERATORS = set(SPECIAL_OPERATOR_GOALS) | REGULAR_META_OPERATORS
 DEFAULT_RESULT_MONTH = str(DASHBOARD_CONFIG.get("preferred_result_month", "")).strip().upper()
-GOAL_FALLBACK_SOURCE_MONTH = "JULHO"
-GOAL_FALLBACK_TARGET_MONTH = "AGOSTO"
+GOAL_FALLBACK_SOURCE_MONTH = "OUTUBRO"
+GOAL_FALLBACK_TARGET_MONTH = "NOVEMBRO"
 MIN_PERFIL_CONTRATOS = 20
 MINIMUM_SCORE_BASE = DASHBOARD_CONFIG["minimum_score_base"]
 OPERATIONAL_BUSINESS_DAY_TOTALS = {
@@ -728,7 +728,7 @@ def load_office_goals(data_version):
         if target_col is not None:
             goals[normalize_month_key(month)] = pd.to_numeric(total_row.iloc[target_col], errors="coerce")
     goals = {k: float(v) for k, v in goals.items() if pd.notna(v)}
-    return goals
+    return carry_over_month_goal(goals)
 
 
 @st.cache_data(show_spinner=False, max_entries=2)
@@ -823,6 +823,12 @@ def load_region_goals(data_version):
             )
 
     df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # Mes sem meta regional cadastrada herda a meta do mes de referencia.
+    source_goals = df[df["MES_RESULTADO"].eq(GOAL_FALLBACK_SOURCE_MONTH)].set_index("REGIAO_KEY")["meta_regiao"]
+    target_mask = df["MES_RESULTADO"].eq(GOAL_FALLBACK_TARGET_MONTH) & df["meta_regiao"].le(0)
+    df.loc[target_mask, "meta_regiao"] = df.loc[target_mask, "REGIAO_KEY"].map(source_goals).fillna(0)
     return df
 
 
@@ -1594,10 +1600,10 @@ def apply_filters(eventos, resultados):
     mes_padrao = []
     if not meses_df.empty:
         mes_atual = MONTH_NAMES_PT.get(pd.Timestamp.today().month)
-        if mes_atual in meses:
-            mes_padrao = [mes_atual]
-        elif DEFAULT_RESULT_MONTH and DEFAULT_RESULT_MONTH in meses:
+        if DEFAULT_RESULT_MONTH and DEFAULT_RESULT_MONTH in meses:
             mes_padrao = [DEFAULT_RESULT_MONTH]
+        elif mes_atual in meses:
+            mes_padrao = [mes_atual]
         else:
             meses_validos = meses_df[meses_df["MES_NUM"] <= pd.Timestamp.today().month]
             base_mes = meses_validos if not meses_validos.empty else meses_df
