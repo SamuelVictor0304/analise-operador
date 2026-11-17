@@ -37,13 +37,13 @@ $startupDir = [Environment]::GetFolderPath("Startup")
 $startupCmd = Join-Path $startupDir "$TaskName.cmd"
 
 try {
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($periodicTrigger, $logonTrigger) -Settings $settings -Description "Verifica periodicamente a base de resultados e faz commit/push automatico quando ela for alterada." -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($periodicTrigger, $logonTrigger) -Settings $settings -Description "Verifica periodicamente a base de resultados e faz commit/push automatico quando ela for alterada." -Force -ErrorAction Stop | Out-Null
 
     if (Test-Path -LiteralPath $startupCmd) {
         Remove-Item -LiteralPath $startupCmd -Force
     }
 
-    Start-ScheduledTask -TaskName $TaskName
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 
     Write-Host "Tarefa instalada: $TaskName"
     Write-Host "Execucao: a cada $IntervalSeconds segundos, no logon e com 3 tentativas em caso de falha."
@@ -62,6 +62,7 @@ catch {
         -WindowStyle Hidden
 
     Write-Host "Nao foi possivel instalar no Agendador de Tarefas: $($_.Exception.Message)"
+    Write-Host "Se for 'Acesso negado', a tarefa existente foi criada como administrador: execute este script em um PowerShell aberto como administrador."
     Write-Host "Fallback instalado na inicializacao do Windows:"
     Write-Host $startupCmd
     Write-Host "Monitor por polling iniciado agora em segundo plano."

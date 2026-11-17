@@ -438,7 +438,12 @@ def num_fmt(value):
 
 
 def safe_div(num, den):
-    return np.where(den == 0, 0, num / den)
+    # Converte para float antes de dividir: colunas object (ints Python) levantam
+    # ZeroDivisionError, pois np.where avalia num / den em todas as linhas.
+    num = np.asarray(pd.to_numeric(num, errors="coerce"), dtype=float)
+    den = np.asarray(pd.to_numeric(den, errors="coerce"), dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(den == 0, 0, num / den)
 
 
 def scalar_safe_div(num, den):
