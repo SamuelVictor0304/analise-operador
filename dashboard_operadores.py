@@ -2466,6 +2466,21 @@ def meta_progress_color(pct):
     return blend_hex("#1f7a4d", "#72d391", (pct - 0.80) / 0.20)
 
 
+def calendar_business_days(year, month):
+    month_start = pd.Timestamp(year=year, month=month, day=1)
+    days = pd.bdate_range(month_start, month_start + pd.offsets.MonthEnd(0))
+    return days[~days.normalize().isin(OPERATIONAL_HOLIDAYS)]
+
+
+def operational_month_business_days(year, month):
+    # Mes operacional do escritorio: do ultimo dia util do mes anterior
+    # ate o penultimo dia util do mes atual.
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    previous_days = calendar_business_days(prev_year, prev_month)
+    current_days = calendar_business_days(year, month)
+    return previous_days[-1:].append(current_days[:-1])
+
+
 def business_day_clock_details(month_labels, today=None):
     today = (today or pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)).normalize()
     month_lookup = {normalize_status(name): month for month, name in MONTH_NAMES_PT.items()}
@@ -2481,10 +2496,8 @@ def business_day_clock_details(month_labels, today=None):
     total_days = 0
     remaining_days = 0
     for month_num in selected_months:
-        month_start = pd.Timestamp(year=today.year, month=month_num, day=1)
-        month_end = month_start + pd.offsets.MonthEnd(0)
-        month_business_days = pd.bdate_range(month_start, month_end)
-        month_business_days = month_business_days[~month_business_days.normalize().isin(OPERATIONAL_HOLIDAYS)]
+        month_business_days = operational_month_business_days(today.year, month_num)
+        month_start, month_end = month_business_days[0], month_business_days[-1]
         month_total_days = OPERATIONAL_BUSINESS_DAY_TOTALS.get((today.year, month_num), len(month_business_days))
         elapsed_for_month = 0
         total_days += month_total_days
